@@ -1,3 +1,3 @@
-sample,assay,fastq_1,fastq_2,condition,replicate,control,peak_file
-HIC_CTRL_R1,hic,/data/hic_ctrl_R1.fastq.gz,/data/hic_ctrl_R2.fastq.gz,CTRL,1,,
-HICHIP_TREAT_R1,hichip,/data/hichip_treat_R1.fastq.gz,/data/hichip_treat_R2.fastq.gz,TREAT,1,HICHIP_CTRL_R1,/data/H3K27ac.reference_peaks.bed
+ID,R1,R2,assay,condition,replicate,control,peak_file
+HIC_CTRL_R1,/data/hic_ctrl_R1.fastq.gz,/data/hic_ctrl_R2.fastq.gz,hic,CTRL,1,,
+HICHIP_TREAT_R1,/data/hichip_treat_R1.fastq.gz,/data/hichip_treat_R2.fastq.gz,hichip,TREAT,1,HICHIP_CTRL_R1,/data/H3K27ac.reference_peaks.bed

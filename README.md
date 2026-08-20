@@ -27,9 +27,9 @@ Use `assets/samplesheet.example.csv` as the template.
 
 | Column | Required | Description |
 |---|---:|---|
-| `sample` | Yes | Unique sample ID containing letters, numbers, `.`, `_` or `-` |
+| `ID` | Yes | Unique sample ID containing letters, numbers, `.`, `_` or `-` |
+| `R1`, `R2` | Yes | Paired-end FASTQ files; relative paths are resolved from the samplesheet directory |
 | `assay` | Yes | `hic` or `hichip` |
-| `fastq_1`, `fastq_2` | Yes | Paired-end FASTQ files; relative paths are resolved from the samplesheet directory |
 | `condition` | No | Biological condition; defaults to the sample ID |
 | `replicate` | No | Biological replicate number; defaults to 1 |
 | `control` | No | Sample ID of a matched control, reserved for differential analysis |
@@ -38,9 +38,9 @@ Use `assets/samplesheet.example.csv` as the template.
 Example:
 
 ```csv
-sample,assay,fastq_1,fastq_2,condition,replicate,control,peak_file
-HIC_CTRL_R1,hic,/data/hic_ctrl_R1.fastq.gz,/data/hic_ctrl_R2.fastq.gz,CTRL,1,,
-HICHIP_TREAT_R1,hichip,/data/hichip_R1.fastq.gz,/data/hichip_R2.fastq.gz,TREAT,1,HICHIP_CTRL_R1,/data/H3K27ac.peaks.bed
+ID,R1,R2,assay,condition,replicate,control,peak_file
+HIC_CTRL_R1,/data/hic_ctrl_R1.fastq.gz,/data/hic_ctrl_R2.fastq.gz,hic,CTRL,1,,
+HICHIP_TREAT_R1,/data/hichip_R1.fastq.gz,/data/hichip_R2.fastq.gz,hichip,TREAT,1,HICHIP_CTRL_R1,/data/H3K27ac.peaks.bed
 ```
 
 ## Reference files

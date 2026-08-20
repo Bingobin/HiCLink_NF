@@ -88,7 +88,7 @@ workflow {
         .map { row ->
             def peakFile = row.peak_file?.trim() ?: ''
             def meta = [
-                id            : row.sample,
+                id            : row.ID,
                 assay         : row.assay,
                 condition     : row.condition,
                 replicate     : row.replicate,
@@ -98,8 +98,8 @@ workflow {
             ]
             tuple(
                 meta,
-                file(row.fastq_1, checkIfExists: true),
-                file(row.fastq_2, checkIfExists: true)
+                file(row.R1, checkIfExists: true),
+                file(row.R2, checkIfExists: true)
             )
         }
 

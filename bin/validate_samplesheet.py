@@ -11,16 +11,16 @@ from pathlib import Path
 
 
 FIELDS = [
-    "sample",
+    "ID",
+    "R1",
+    "R2",
     "assay",
-    "fastq_1",
-    "fastq_2",
     "condition",
     "replicate",
     "control",
     "peak_file",
 ]
-REQUIRED = {"sample", "assay", "fastq_1", "fastq_2"}
+REQUIRED = {"ID", "R1", "R2", "assay"}
 SAMPLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 URI_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
@@ -60,7 +60,7 @@ def validate(input_path: Path, output_path: Path, base_dir: Path) -> None:
 
         for line_number, raw in enumerate(reader, start=2):
             row = {field: (raw.get(field) or "").strip() for field in FIELDS}
-            sample = row["sample"]
+            sample = row["ID"]
             if not SAMPLE_RE.fullmatch(sample):
                 errors.append(
                     f"line {line_number}: invalid sample '{sample}'; use letters, digits, '.', '_' or '-'"
@@ -74,7 +74,7 @@ def validate(input_path: Path, output_path: Path, base_dir: Path) -> None:
             except ValueError as exc:
                 errors.append(f"line {line_number}: {exc}; received '{row['assay']}'")
 
-            for field in ("fastq_1", "fastq_2"):
+            for field in ("R1", "R2"):
                 if not row[field]:
                     errors.append(f"line {line_number}: {field} is empty")
                 row[field] = normalize_path(row[field], base_dir)
