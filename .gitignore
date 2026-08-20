@@ -1,0 +1,50 @@
+# Nextflow runtime state and generated outputs
+.nextflow*
+work/
+results/
+results_test/
+
+# Local pipeline configuration (the example config remains tracked)
+conf/params.local.yml
+conf/params.*.local.yml
+params.local.yml
+*.local.config
+.env
+.env.*
+!.env.example
+
+# Local environments and Python caches
+.conda/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs, caches, and temporary files
+*.log
+*.pid
+*.tmp
+*.temp
+*.bak
+.cache/
+tmp/
+temp/
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Operating-system metadata
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+Desktop.ini
