@@ -4,7 +4,7 @@ outdir: results
 fasta: /reference/hg38.fa
 chrom_sizes: /reference/hg38.chrom.sizes
 genome: hg38
-phasing_track: /reference/hg38.gc.100kb.tsv
+phasing_track: assets/HG38_GC_100kb.bedgraph
 phasing_track_column: GC
 
 base_resolution: 5000
