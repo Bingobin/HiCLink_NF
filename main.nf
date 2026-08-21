@@ -22,6 +22,16 @@ def intList(value, String name) {
 
 
 workflow {
+    int memoryPerCpuGb
+    try {
+        memoryPerCpuGb = params.memory_per_cpu_gb as Integer
+    } catch (Exception ignored) {
+        error "Parameter --memory_per_cpu_gb must be a positive integer; received: ${params.memory_per_cpu_gb}"
+    }
+    if (memoryPerCpuGb <= 0) {
+        error "Parameter --memory_per_cpu_gb must be a positive integer; received: ${params.memory_per_cpu_gb}"
+    }
+
     log.info """
     HiCLink_NF ${workflow.manifest.version}
     Unified Hi-C and HiChIP analysis
@@ -30,6 +40,7 @@ workflow {
     Assay mode  : determined per sample
     Output      : ${params.outdir}
     Genome      : ${params.genome}
+    Memory/CPU  : ${memoryPerCpuGb} GB
     """.stripIndent()
 
     if (!params.input) {

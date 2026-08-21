@@ -113,6 +113,19 @@ For a Hi-C-only project, set `--run_fithichip false`. For a HiChIP sample withou
 
 The finest configurable resolution is not necessarily biologically supportable. Select the final resolution using valid cis contacts, matrix sparsity, replicate concordance and feature recovery.
 
+## Compute resources
+
+`memory_per_cpu_gb` controls memory allocation per requested CPU and defaults to `4`. Each task receives `task.cpus * memory_per_cpu_gb` GB, while CPU count and time limit remain assigned by workload class:
+
+| Class | CPU | Default memory | Time | Main processes |
+|---|---:|---:|---:|---|
+| `small` | 2 | 8 GB | 2 h | samplesheet validation, FastQC, contact QC and MultiQC |
+| `medium` | 8 | 32 GB | 12 h | fastp, expected-cis, compartments, insulation/TADs and peak calling |
+| `large` | 16 | 64 GB | 48 h | BWA/SAMtools, pairtools, cooler and cooltools dots |
+| `xlarge` | 24 | 96 GB | 72 h | FitHiChIP |
+
+For a cluster with a different CPU-to-memory allocation ratio, change only `memory_per_cpu_gb` in the parameter file. The test profile intentionally overrides these production resources with 1 CPU and 1 GB per class.
+
 ## Outputs
 
 ```text

@@ -1,5 +1,6 @@
 input: assets/samplesheet.example.csv
 outdir: results
+memory_per_cpu_gb: 4
 
 fasta: /reference/hg38.fa
 chrom_sizes: /reference/hg38.chrom.sizes
