@@ -60,7 +60,7 @@ process FASTQC_RAW {
 
 process FASTP {
     tag "${meta.id}"
-    label 'medium'
+    label 'large'
 
     publishDir "${params.outdir}/01_qc/fastp", pattern: '*.{json,html}', mode: params.publish_mode, overwrite: true
     publishDir "${params.outdir}/02_preprocessing/trimmed_fastq", pattern: '*.fastq.gz', mode: params.publish_mode, overwrite: true, enabled: params.save_trimmed.toString().toBoolean()
@@ -213,7 +213,7 @@ process PEAKS_BIGWIG {
 
 process PAIRTOOLS {
     tag "${meta.id}"
-    label 'large'
+    label 'medium'
 
     publishDir "${params.outdir}/03_pairs", pattern: '*.valid.pairs.gz', mode: params.publish_mode, overwrite: true, enabled: params.save_pairs.toString().toBoolean()
     publishDir "${params.outdir}/01_qc/pairtools", pattern: '*.stats', mode: params.publish_mode, overwrite: true

@@ -17,7 +17,7 @@
 
 - 用一组已有结果的样本做回归验证：valid pairs 数、cis/trans 比、duplicate rate、每个分辨率的 contacts 和稀疏度应与旧流程在可解释范围内一致。
 - 为实验协议确认 `walks_policy`、MAPQ、restriction-fragment 处理和 read trimming。当前默认值适合常规 paired-end Hi-C/HiChIP，但不能替代协议核对。
-- 根据集群节点和样本深度重新标定 `large/xlarge` 的 CPU、内存、时间；pairtools sort 和 cooler zoomify 是主要 I/O/临时空间热点。
+- 根据集群节点和样本深度重新标定 `small/medium/large` 的 CPU、内存、时间；pairtools sort 和 cooler zoomify 是主要 I/O/临时空间热点。
 - 固定实际验证过的 Conda lock file 或构建单一版本化容器；当前 YAML 使用最低版本范围，便于首次求解，但不是严格锁版本环境。
 - FitHiChIP 官方镜像先用小样本验证挂载路径和输出版本，再提交整批数据。
 

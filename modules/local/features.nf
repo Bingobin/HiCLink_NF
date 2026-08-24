@@ -83,6 +83,7 @@ process COMPARTMENTS {
         : phasing_track.toString()
     """
     cooltools eigs-cis \\
+        --nproc ${task.cpus} \\
         --n-eigs ${params.compartment_n_eigs} \\
         --phasing-track '${track}' \\
         --out-prefix ${meta.id}.compartments \\
@@ -283,7 +284,7 @@ process HICHIP_PEAK_ANNOTATION {
 
 process FITHICHIP {
     tag "${meta.id}"
-    label 'xlarge'
+    label 'large'
 
     publishDir "${params.outdir}/06_hichip/fithichip", mode: params.publish_mode, overwrite: true
 

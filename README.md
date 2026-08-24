@@ -121,9 +121,8 @@ The finest configurable resolution is not necessarily biologically supportable. 
 | Class | CPU | Default memory | Time | Main processes |
 |---|---:|---:|---:|---|
 | `small` | 2 | 8 GB | 2 h | samplesheet validation, FastQC, contact QC and MultiQC |
-| `medium` | 8 | 32 GB | 12 h | fastp, BigWig, expected-cis, compartments, insulation/TADs and peak calling |
-| `large` | 16 | 64 GB | 48 h | BWA/SAMtools, pairtools, cooler and cooltools dots |
-| `xlarge` | 24 | 96 GB | 72 h | FitHiChIP |
+| `medium` | 8 | 32 GB | 12 h | pairtools, BigWig, expected-cis, compartments, insulation/TADs and peak calling |
+| `large` | 16 | 64 GB | 48 h | fastp, BWA/SAMtools, cooler, cooltools dots and FitHiChIP |
 
 For a cluster with a different CPU-to-memory allocation ratio, change only `memory_per_cpu_gb` in the parameter file. The test profile intentionally overrides these production resources with 1 CPU and 1 GB per class.
 
