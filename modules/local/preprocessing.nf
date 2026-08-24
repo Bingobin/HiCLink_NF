@@ -13,9 +13,9 @@ process VALIDATE_SAMPLESHEET {
 
     script:
     """
-    validate_samplesheet.py \
-        --input ${input_sheet} \
-        --output samplesheet.validated.csv \
+    validate_samplesheet.py \\
+        --input ${input_sheet} \\
+        --output samplesheet.validated.csv \\
         --base-dir '${base_dir}'
     """
 
@@ -78,14 +78,14 @@ process FASTP {
         ? '--disable_adapter_trimming --disable_quality_filtering --disable_length_filtering --disable_trim_poly_g'
         : params.fastp_extra_args
     """
-    fastp \
-        --in1 ${read1} \
-        --in2 ${read2} \
-        --out1 ${meta.id}.R1.fastq.gz \
-        --out2 ${meta.id}.R2.fastq.gz \
-        --thread ${task.cpus} \
-        --json ${meta.id}.fastp.json \
-        --html ${meta.id}.fastp.html \
+    fastp \\
+        --in1 ${read1} \\
+        --in2 ${read2} \\
+        --out1 ${meta.id}.R1.fastq.gz \\
+        --out2 ${meta.id}.R2.fastq.gz \\
+        --thread ${task.cpus} \\
+        --json ${meta.id}.fastp.json \\
+        --html ${meta.id}.fastp.html \\
         ${noTrim}
     """
 
@@ -102,7 +102,7 @@ process BWA_ALIGN {
     tag "${meta.id}"
     label 'large'
 
-    publishDir "${params.outdir}/01_qc/alignment", pattern: '*.alignment.flagstat', mode: params.publish_mode, overwrite: true
+    publishDir "${params.outdir}/01_qc/alignment", pattern: '*.flagstat', mode: params.publish_mode, overwrite: true
     publishDir "${params.outdir}/02_preprocessing/alignment_bam", pattern: '*.{peaks.bam,peaks.bam.bai}', mode: params.publish_mode, overwrite: true, enabled: params.save_alignment_bam.toString().toBoolean()
 
     input:
@@ -111,30 +111,102 @@ process BWA_ALIGN {
     output:
     tuple val(meta), path("${meta.id}.contacts.bam"), emit: contacts
     tuple val(meta), path("${meta.id}.peaks.bam"), path("${meta.id}.peaks.bam.bai"), emit: peak_bam
-    tuple val(meta), path("${meta.id}.alignment.flagstat"), emit: flagstat
+    tuple val(meta), path("${meta.id}.contacts.flagstat"), path("${meta.id}.peaks.flagstat"), emit: flagstats
 
     script:
     """
     set -o pipefail
 
-    bwa mem -SP -t ${task.cpus} ${fasta} ${read1} ${read2} \
+    bwa mem -SP -t ${task.cpus} ${fasta} ${read1} ${read2} \\
         | samtools view -@ ${task.cpus} -bh -o ${meta.id}.contacts.bam -
+
+    samtools flagstat -@ ${task.cpus} ${meta.id}.contacts.bam > ${meta.id}.contacts.flagstat
 
     samtools sort -n -@ ${task.cpus} -o ${meta.id}.namesort.bam ${meta.id}.contacts.bam
     samtools fixmate -m -@ ${task.cpus} ${meta.id}.namesort.bam ${meta.id}.fixmate.bam
+    rm -f ${meta.id}.namesort.bam
+
     samtools sort -@ ${task.cpus} -o ${meta.id}.positionsort.bam ${meta.id}.fixmate.bam
+    rm -f ${meta.id}.fixmate.bam
+
     samtools markdup -r -@ ${task.cpus} ${meta.id}.positionsort.bam ${meta.id}.markdup.bam
-    samtools view -@ ${task.cpus} -bh -q ${params.min_mapq} -F 3852 \
+    rm -f ${meta.id}.positionsort.bam
+
+    samtools view -@ ${task.cpus} -bh -q ${params.min_mapq} -F 3844 \\
         -o ${meta.id}.peaks.bam ${meta.id}.markdup.bam
+    rm -f ${meta.id}.markdup.bam
+
     samtools index -@ ${task.cpus} ${meta.id}.peaks.bam
-    samtools flagstat -@ ${task.cpus} ${meta.id}.peaks.bam > ${meta.id}.alignment.flagstat
+    samtools flagstat -@ ${task.cpus} ${meta.id}.peaks.bam > ${meta.id}.peaks.flagstat
     """
 
     stub:
     """
     touch ${meta.id}.contacts.bam
     touch ${meta.id}.peaks.bam ${meta.id}.peaks.bam.bai
-    touch ${meta.id}.alignment.flagstat
+    touch ${meta.id}.contacts.flagstat ${meta.id}.peaks.flagstat
+    """
+}
+
+
+process PEAKS_BIGWIG {
+    tag "${meta.id}"
+    label 'medium'
+
+    publishDir "${params.outdir}/06_hichip/bigwig", pattern: '*.peaks.RPGC.bw', mode: params.publish_mode, overwrite: true
+
+    input:
+    tuple val(meta), path(bam), path(bai)
+
+    output:
+    tuple val(meta), path("${meta.id}.peaks.RPGC.bw"), emit: bigwig
+
+    when:
+    params.save_peak_bigwig.toString().toBoolean() && meta.assay == 'hichip'
+
+    script:
+    def genomeKey = params.genome?.toString()?.trim()?.toLowerCase()
+    def defaultEffectiveGenomeSizes = [
+        'hg38'  : 2913022398L,
+        'grch38': 2913022398L
+    ]
+    def effectiveGenomeSizeValue = params.effective_genome_size ?: defaultEffectiveGenomeSizes[genomeKey]
+    if (!effectiveGenomeSizeValue) {
+        error "HiChIP BigWig generation requires --effective_genome_size for genome '${params.genome}'. hg38/GRCh38 defaults to 2913022398; custom genomes must set this parameter explicitly."
+    }
+    long effectiveGenomeSize
+    int binSize
+    try {
+        effectiveGenomeSize = effectiveGenomeSizeValue as Long
+        binSize = params.bigwig_bin_size as Integer
+    } catch (Exception ignored) {
+        error "Parameters --effective_genome_size and --bigwig_bin_size must be positive integers."
+    }
+    if (effectiveGenomeSize <= 0 || binSize <= 0) {
+        error "Parameters --effective_genome_size and --bigwig_bin_size must be positive integers."
+    }
+    def ignoredChromosomes = params.bigwig_ignore_for_normalization?.toString()?.trim()
+    def ignoreArgs = ignoredChromosomes
+        ? "--ignoreForNormalization ${ignoredChromosomes.split(',').collect { it.trim() }.findAll { it }.join(' ')}"
+        : ''
+    """
+    # Do not use --extendReads: HiChIP mates represent proximity contacts, not
+    # contiguous ChIP-seq fragments.
+    bamCoverage \\
+        --bam ${bam} \\
+        --outFileName ${meta.id}.peaks.RPGC.bw \\
+        --outFileFormat bigwig \\
+        --binSize ${binSize} \\
+        --normalizeUsing RPGC \\
+        --effectiveGenomeSize ${effectiveGenomeSize} \\
+        --numberOfProcessors ${task.cpus} \\
+        ${ignoreArgs} \\
+        ${params.bigwig_extra_args}
+    """
+
+    stub:
+    """
+    touch ${meta.id}.peaks.RPGC.bw
     """
 }
 
@@ -157,23 +229,23 @@ process PAIRTOOLS {
     """
     set -o pipefail
 
-    pairtools parse \
-        --chroms-path ${chrom_sizes} \
-        --min-mapq ${params.min_mapq} \
-        --walks-policy ${params.walks_policy} \
-        --drop-sam \
-        --output-stats ${meta.id}.parse.stats \
-        --nproc-in ${task.cpus} \
-        --nproc-out ${task.cpus} \
-        ${bam} \
-    | pairtools sort \
-        --nproc ${task.cpus} \
-        --tmpdir . \
-    | pairtools dedup \
-        --max-mismatch ${params.dedup_max_mismatch} \
-        --output-stats ${meta.id}.dedup.stats \
-    | pairtools select \
-        '(pair_type == "UU")' \
+    pairtools parse \\
+        --chroms-path ${chrom_sizes} \\
+        --min-mapq ${params.min_mapq} \\
+        --walks-policy ${params.walks_policy} \\
+        --drop-sam \\
+        --output-stats ${meta.id}.parse.stats \\
+        --nproc-in ${task.cpus} \\
+        --nproc-out ${task.cpus} \\
+        ${bam} \\
+    | pairtools sort \\
+        --nproc ${task.cpus} \\
+        --tmpdir . \\
+    | pairtools dedup \\
+        --max-mismatch ${params.dedup_max_mismatch} \\
+        --output-stats ${meta.id}.dedup.stats \\
+    | pairtools select \\
+        '((pair_type == "UU") or (pair_type == "UR") or (pair_type == "RU"))' \\
         -o ${meta.id}.valid.pairs.gz
 
     pairtools stats -o ${meta.id}.pairtools.stats ${meta.id}.valid.pairs.gz
@@ -201,24 +273,24 @@ process COOLER_MATRIX {
 
     script:
     """
-    cooler cload pairs \
-        --assembly ${params.genome} \
-        -c1 2 -p1 3 -c2 4 -p2 5 \
-        ${chrom_sizes}:${params.base_resolution} \
-        ${pairs} \
+    cooler cload pairs \\
+        --assembly ${params.genome} \\
+        -c1 2 -p1 3 -c2 4 -p2 5 \\
+        ${chrom_sizes}:${params.base_resolution} \\
+        ${pairs} \\
         ${meta.id}.${params.base_resolution}.cool
 
-    cooler balance \
-        --nproc ${task.cpus} \
-        --ignore-diags ${params.balance_ignore_diags} \
+    cooler balance \\
+        --nproc ${task.cpus} \\
+        --ignore-diags ${params.balance_ignore_diags} \\
         ${meta.id}.${params.base_resolution}.cool
 
-    cooler zoomify \
-        --balance \
-        --balance-args '--nproc ${task.cpus} --ignore-diags ${params.balance_ignore_diags}' \
-        --nproc ${task.cpus} \
-        --resolutions ${params.resolutions} \
-        -o ${meta.id}.mcool \
+    cooler zoomify \\
+        --balance \\
+        --balance-args '--nproc ${task.cpus} --ignore-diags ${params.balance_ignore_diags}' \\
+        --nproc ${task.cpus} \\
+        --resolutions ${params.resolutions} \\
+        -o ${meta.id}.mcool \\
         ${meta.id}.${params.base_resolution}.cool
     """
 

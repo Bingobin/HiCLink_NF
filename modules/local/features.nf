@@ -17,9 +17,9 @@ process CONTACT_QC {
     def uri = "${multi_cool}::/resolutions/${params.analysis_resolution}"
     """
     cool_sparsity.py '${uri}' --output ${meta.id}.contact_qc.tsv
-    cooltools coverage \
-        --nproc ${task.cpus} \
-        -o ${meta.id}.coverage.tsv \
+    cooltools coverage \\
+        --nproc ${task.cpus} \\
+        -o ${meta.id}.coverage.tsv \\
         '${uri}'
     """
 
@@ -48,9 +48,9 @@ process EXPECTED_CIS {
     script:
     def uri = "${multi_cool}::/resolutions/${params.loop_resolution}"
     """
-    cooltools expected-cis \
-        --nproc ${task.cpus} \
-        -o ${meta.id}.expected_cis.tsv \
+    cooltools expected-cis \\
+        --nproc ${task.cpus} \\
+        -o ${meta.id}.expected_cis.tsv \\
         '${uri}'
     """
 
@@ -82,10 +82,10 @@ process COMPARTMENTS {
         ? "${phasing_track}::${params.phasing_track_column}"
         : phasing_track.toString()
     """
-    cooltools eigs-cis \
-        --n-eigs ${params.compartment_n_eigs} \
-        --phasing-track '${track}' \
-        --out-prefix ${meta.id}.compartments \
+    cooltools eigs-cis \\
+        --n-eigs ${params.compartment_n_eigs} \\
+        --phasing-track '${track}' \\
+        --out-prefix ${meta.id}.compartments \\
         '${uri}'
     """
 
@@ -117,17 +117,17 @@ process INSULATION_TADS {
         ? params.tad_windows.join(' ')
         : params.tad_windows.toString().split(',').collect { it.trim() }.join(' ')
     """
-    cooltools insulation \
-        --nproc ${task.cpus} \
-        --threshold ${params.insulation_threshold} \
-        -o ${meta.id}.insulation.tsv \
-        '${uri}' \
+    cooltools insulation \\
+        --nproc ${task.cpus} \\
+        --threshold ${params.insulation_threshold} \\
+        -o ${meta.id}.insulation.tsv \\
+        '${uri}' \\
         ${windows}
 
     for window in ${windows}; do
-        insulation_to_TAD.py \
-            ${meta.id}.insulation.tsv \
-            --window \${window} \
+        insulation_to_TAD.py \\
+            ${meta.id}.insulation.tsv \\
+            --window \${window} \\
             --output ${meta.id}.TAD.\${window}bp.bed
     done
     """
@@ -157,11 +157,11 @@ process COOLTOOLS_DOTS {
     script:
     def uri = "${multi_cool}::/resolutions/${params.loop_resolution}"
     """
-    cooltools dots \
-        --nproc ${task.cpus} \
-        --max-loci-separation ${params.max_loop_distance} \
-        -o ${meta.id}.dots.tsv \
-        '${uri}' \
+    cooltools dots \\
+        --nproc ${task.cpus} \\
+        --max-loci-separation ${params.max_loop_distance} \\
+        -o ${meta.id}.dots.tsv \\
+        '${uri}' \\
         ${expected}
     """
 
@@ -176,13 +176,15 @@ process HICHIP_PEAKS {
     tag "${meta.id}"
     label 'medium'
 
-    publishDir "${params.outdir}/06_hichip/peaks", mode: params.publish_mode, overwrite: true
+    publishDir "${params.outdir}/06_hichip/peaks", pattern: '*.peaks.bed', mode: params.publish_mode, overwrite: true
+    publishDir "${params.outdir}/06_hichip/callpeaks", pattern: '*.callpeaks', mode: params.publish_mode, overwrite: true
 
     input:
     tuple val(meta), path(bam), path(bai), path(input_peak)
 
     output:
     tuple val(meta), path("${meta.id}.peaks.bed"), emit: peaks
+    tuple val(meta), path("${meta.id}.callpeaks"), emit: callpeak_results
 
     when:
     params.run_hichip_peaks.toString().toBoolean()
@@ -190,33 +192,91 @@ process HICHIP_PEAKS {
     script:
     if (meta.peak_provided) {
         return """
+        mkdir -p ${meta.id}.callpeaks
         if [[ '${input_peak}' == *.gz ]]; then
             gzip -cd ${input_peak} | awk 'BEGIN{OFS="\\t"} !/^#/ && NF >= 3 {print}' > ${meta.id}.peaks.bed
         else
             awk 'BEGIN{OFS="\\t"} !/^#/ && NF >= 3 {print}' ${input_peak} > ${meta.id}.peaks.bed
         fi
         test -s ${meta.id}.peaks.bed
+        cp ${meta.id}.peaks.bed ${meta.id}.callpeaks/${meta.id}.external.peaks.bed
+        printf 'source\\t%s\\n' '${meta.peak_file}' > ${meta.id}.callpeaks/${meta.id}.peak_source.tsv
         """
     }
     if (!params.macs2_genome_size) {
         error "HiChIP sample ${meta.id} has no peak_file; set --macs2_genome_size (for example hs, mm, or an effective genome size)."
     }
     """
-    macs2 callpeak \
-        --treatment ${bam} \
-        --format BAMPE \
-        --gsize ${params.macs2_genome_size} \
-        --name ${meta.id} \
-        --qvalue ${params.macs2_qvalue} \
-        --keep-dup all \
+    set -o pipefail
+
+    # Hi-C/HiChIP alignments are proximity-ligation contacts, not ordinary
+    # short-insert paired-end fragments. Convert both primary read alignments
+    # to BED so MACS2 does not discard them in BAMPE mode.
+    bedtools bamtobed -i ${bam} \\
+        | awk '{ seen = 1; print } END { if (!seen) { print "ERROR: no primary alignments were available for MACS2 peak calling" > "/dev/stderr"; exit 42 } }' \\
+        | pigz -p ${task.cpus} > ${meta.id}.primary.bed.gz
+
+    macs2 callpeak \\
+        --treatment ${meta.id}.primary.bed.gz \\
+        --format BED \\
+        --gsize ${params.macs2_genome_size} \\
+        --name ${meta.id} \\
+        --qvalue ${params.macs2_qvalue} \\
+        --nomodel \\
+        --extsize ${params.macs2_extsize} \\
+        --SPMR \\
+        --keep-dup all \\
         ${params.macs2_extra_args}
 
     cp ${meta.id}_peaks.narrowPeak ${meta.id}.peaks.bed
+    mkdir -p ${meta.id}.callpeaks
+    mv \\
+        ${meta.id}_peaks.xls \\
+        ${meta.id}_peaks.narrowPeak \\
+        ${meta.id}_summits.bed \\
+        ${meta.id}.callpeaks/
+    rm -f ${meta.id}.primary.bed.gz
     """
 
     stub:
     """
+    mkdir -p ${meta.id}.callpeaks
     touch ${meta.id}.peaks.bed
+    touch \\
+        ${meta.id}.callpeaks/${meta.id}_peaks.xls \\
+        ${meta.id}.callpeaks/${meta.id}_peaks.narrowPeak \\
+        ${meta.id}.callpeaks/${meta.id}_summits.bed
+    """
+}
+
+
+process HICHIP_PEAK_ANNOTATION {
+    tag "${meta.id}"
+    label 'small'
+
+    publishDir "${params.outdir}/06_hichip/peak_annotation", mode: params.publish_mode, overwrite: true
+
+    input:
+    tuple val(meta), path(peaks)
+
+    output:
+    tuple val(meta), path("${meta.id}.peaks.anno.txt"), path("${meta.id}.peaks.anno.stats"), emit: annotation
+
+    when:
+    params.run_peak_annotation.toString().toBoolean() && meta.assay == 'hichip'
+
+    script:
+    """
+    annotatePeaks.pl \\
+        ${peaks} \\
+        ${params.genome} \\
+        -annStats ${meta.id}.peaks.anno.stats \\
+        > ${meta.id}.peaks.anno.txt
+    """
+
+    stub:
+    """
+    touch ${meta.id}.peaks.anno.txt ${meta.id}.peaks.anno.stats
     """
 }
 

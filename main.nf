@@ -2,8 +2,8 @@
 
 nextflow.enable.dsl = 2
 
-include { VALIDATE_SAMPLESHEET; FASTQC_RAW; FASTP; BWA_ALIGN; PAIRTOOLS; COOLER_MATRIX } from './modules/local/preprocessing'
-include { CONTACT_QC; EXPECTED_CIS; COMPARTMENTS; INSULATION_TADS; COOLTOOLS_DOTS; HICHIP_PEAKS; FITHICHIP } from './modules/local/features'
+include { VALIDATE_SAMPLESHEET; FASTQC_RAW; FASTP; BWA_ALIGN; PEAKS_BIGWIG; PAIRTOOLS; COOLER_MATRIX } from './modules/local/preprocessing'
+include { CONTACT_QC; EXPECTED_CIS; COMPARTMENTS; INSULATION_TADS; COOLTOOLS_DOTS; HICHIP_PEAKS; HICHIP_PEAK_ANNOTATION; FITHICHIP } from './modules/local/features'
 include { MULTIQC } from './modules/local/reporting'
 
 
@@ -30,6 +30,16 @@ workflow {
     }
     if (memoryPerCpuGb <= 0) {
         error "Parameter --memory_per_cpu_gb must be a positive integer; received: ${params.memory_per_cpu_gb}"
+    }
+
+    int macs2Extsize
+    try {
+        macs2Extsize = params.macs2_extsize as Integer
+    } catch (Exception ignored) {
+        error "Parameter --macs2_extsize must be a positive integer; received: ${params.macs2_extsize}"
+    }
+    if (macs2Extsize <= 0) {
+        error "Parameter --macs2_extsize must be a positive integer; received: ${params.macs2_extsize}"
     }
 
     log.info """
@@ -122,6 +132,10 @@ workflow {
     }
     BWA_ALIGN(alignmentInput)
 
+    hichipPeakBams = BWA_ALIGN.out.peak_bam
+        .filter { meta, bam, bai -> meta.assay == 'hichip' }
+    PEAKS_BIGWIG(hichipPeakBams)
+
     pairtoolsInput = BWA_ALIGN.out.contacts.map { meta, bam ->
         tuple(meta, bam, chromSizes)
     }
@@ -161,15 +175,14 @@ workflow {
         }
     COOLTOOLS_DOTS(hicLoopInput)
 
-    hichipPeakInput = BWA_ALIGN.out.peak_bam
-        .filter { meta, bam, bai -> meta.assay == 'hichip' }
-        .map { meta, bam, bai ->
+    hichipPeakInput = hichipPeakBams.map { meta, bam, bai ->
             def peak = meta.peak_provided
                 ? file(meta.peak_file, checkIfExists: true)
                 : emptyPeak
             tuple(meta, bam, bai, peak)
-        }
+    }
     HICHIP_PEAKS(hichipPeakInput)
+    HICHIP_PEAK_ANNOTATION(HICHIP_PEAKS.out.peaks)
 
     keyedPeaks = HICHIP_PEAKS.out.peaks.map { meta, peaks -> tuple(meta.id, meta, peaks) }
     keyedMatrices = matrices
@@ -185,7 +198,9 @@ workflow {
         .flatten()
         .mix(FASTP.out.json.map { meta, json -> json })
         .mix(PAIRTOOLS.out.stats.map { meta, parseStats, dedupStats, pairStats -> [parseStats, dedupStats, pairStats] }.flatten())
-        .mix(BWA_ALIGN.out.flagstat.map { meta, flagstat -> flagstat })
+        .mix(BWA_ALIGN.out.flagstats.map { meta, contactsFlagstat, peaksFlagstat ->
+            [contactsFlagstat, peaksFlagstat]
+        }.flatten())
 
     MULTIQC(multiqcInputs.collect(), Channel.value(multiqcConfig))
 }

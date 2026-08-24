@@ -17,11 +17,11 @@ process MULTIQC {
 
     script:
     """
-    multiqc \
-        --force \
-        --config ${multiqc_config} \
-        --filename multiqc_report.html \
-        --outdir . \
+    multiqc \\
+        --force \\
+        --config ${multiqc_config} \\
+        --filename multiqc_report.html \\
+        --outdir . \\
         .
     """
 

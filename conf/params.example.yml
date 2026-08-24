@@ -7,6 +7,10 @@ chrom_sizes: /reference/hg38.chrom.sizes
 genome: hg38
 phasing_track: assets/HG38_GC_100kb.bedgraph
 phasing_track_column: GC
+effective_genome_size: 2913022398
+save_peak_bigwig: true
+bigwig_bin_size: 10
+bigwig_ignore_for_normalization: chrX
 
 base_resolution: 5000
 resolutions: 5000,10000,25000,50000,100000,250000,500000,1000000
@@ -16,4 +20,6 @@ loop_resolution: 10000
 tad_windows: 100000,250000,500000
 
 macs2_genome_size: hs
+macs2_extsize: 147
+run_peak_annotation: true
 run_fithichip: true

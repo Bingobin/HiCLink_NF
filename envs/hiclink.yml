@@ -8,11 +8,14 @@ dependencies:
   - pandas>=2.0
   - bwa>=0.7.17
   - samtools>=1.17
+  - bedtools>=2.31
   - fastqc>=0.12
   - fastp>=0.23
   - pairtools>=1.1
   - cooler>=0.10
   - cooltools>=0.7
+  - deeptools>=3.5
+  - homer
   - macs2>=2.2
   - multiqc>=1.20
   - pigz

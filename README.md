@@ -14,7 +14,7 @@ FASTQ
   ├─ balanced single- and multi-resolution cooler matrices
   ├─ shared: contact coverage and matrix sparsity QC
   ├─ Hi-C: expected-cis, compartments, insulation/TADs and cooltools dots
-  └─ HiChIP: supplied or MACS2 peaks and FitHiChIP loops
+  └─ HiChIP: RPGC BigWig, supplied or MACS2 peaks, HOMER annotation and FitHiChIP loops
 ```
 
 A single samplesheet can contain both `hic` and `hichip` libraries. The pipeline retains `condition`, `replicate` and `control` metadata for future replicate-aware and differential modules.
@@ -50,6 +50,7 @@ Required reference files:
 - A reference FASTA with classic BWA index files beside it: `.amb`, `.ann`, `.bwt`, `.pac` and `.sa`.
 - A two-column chromosome sizes file without a header.
 - An optional four-column, header-containing phasing track for compartment analysis. Its resolution must match `compartment_resolution`, and `phasing_track_column` identifies its signal column, for example `GC`.
+- An effective genome size is required when `save_peak_bigwig` is enabled. `genome: hg38` or `GRCh38` automatically uses `2913022398`; `effective_genome_size` can override it and is required for custom genomes.
 
 Reference preparation example:
 
@@ -101,7 +102,7 @@ nextflow run main.nf \
   --input samplesheet.csv
 ```
 
-For a Hi-C-only project, set `--run_fithichip false`. For a HiChIP sample without `peak_file`, set `--macs2_genome_size` to `hs`, `mm` or an effective genome size.
+For a Hi-C-only project, set `--run_fithichip false`. For a HiChIP sample without `peak_file`, set `--macs2_genome_size` to `hs`, `mm` or an effective genome size. The workflow converts primary HiChIP alignments to BED before MACS2 peak calling because proximity-ligation pairs are not ordinary short-insert `BAMPE` fragments. MACS2 runs with `--nomodel`; `macs2_extsize` controls the fixed extension length and defaults to 147 bp.
 
 ## Resolution parameters
 
@@ -120,7 +121,7 @@ The finest configurable resolution is not necessarily biologically supportable. 
 | Class | CPU | Default memory | Time | Main processes |
 |---|---:|---:|---:|---|
 | `small` | 2 | 8 GB | 2 h | samplesheet validation, FastQC, contact QC and MultiQC |
-| `medium` | 8 | 32 GB | 12 h | fastp, expected-cis, compartments, insulation/TADs and peak calling |
+| `medium` | 8 | 32 GB | 12 h | fastp, BigWig, expected-cis, compartments, insulation/TADs and peak calling |
 | `large` | 16 | 64 GB | 48 h | BWA/SAMtools, pairtools, cooler and cooltools dots |
 | `xlarge` | 24 | 96 GB | 72 h | FitHiChIP |
 
@@ -132,12 +133,18 @@ For a cluster with a different CPU-to-memory allocation ratio, change only `memo
 results/
 ├── 01_qc/                 FastQC, fastp, alignment and pairtools QC
 ├── 02_preprocessing/      Optional trimmed FASTQ and alignment BAM files
-├── 03_pairs/              Deduplicated UU valid pairs
+├── 03_pairs/              Deduplicated UU/UR/RU valid pairs
 ├── 04_matrices/           Base-resolution .cool and multi-resolution .mcool
 ├── 05_features/           Contact QC, expected, compartments, TADs and Hi-C loops
-├── 06_hichip/             Peaks and FitHiChIP loops
+├── 06_hichip/             RPGC BigWig, MACS2 outputs, peak annotation and FitHiChIP loops
 └── pipeline_info/         Validated samplesheet, MultiQC, trace, timeline, report and DAG
 ```
+
+Alignment QC contains separate `SAMPLE.contacts.flagstat` and `SAMPLE.peaks.flagstat` files. The first summarizes the unfiltered BWA contact alignments, while the second summarizes the MAPQ-filtered, primary, non-duplicate alignments used for HiChIP peak calling. Both are included in MultiQC.
+
+For HiChIP samples, `save_peak_bigwig: true` generates `SAMPLE.peaks.RPGC.bw` from the filtered peak-calling BAM using deepTools `bamCoverage`. This follows the ChIPalign_NF RPGC/10-bp-bin convention, but intentionally omits `--extendReads`: HiChIP mates represent proximity contacts and must not be extended as contiguous ChIP-seq fragments. `bigwig_ignore_for_normalization` is optional; the hg38 example uses `chrX` to match the referenced ChIP-seq configuration.
+
+MACS2 peak calling retains the ChIPalign_NF-style `SAMPLE_peaks.xls`, `SAMPLE_peaks.narrowPeak` and `SAMPLE_summits.bed` files under `06_hichip/callpeaks/SAMPLE.callpeaks/`, while `SAMPLE.peaks.bed` remains the canonical FitHiChIP input. For a supplied `peak_file`, the callpeaks directory instead records a normalized copy and its source path. When `run_peak_annotation` is enabled, HOMER `annotatePeaks.pl` writes `SAMPLE.peaks.anno.txt` and `SAMPLE.peaks.anno.stats` under `06_hichip/peak_annotation/`.
 
 ## Validation
 

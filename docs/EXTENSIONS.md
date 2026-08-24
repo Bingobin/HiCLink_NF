@@ -5,7 +5,7 @@
 1. 移除 reference、chromosome sizes、hg38、10 kb 与 Mustache 路径的硬编码。
 2. 用统一 samplesheet 区分 Hi-C/HiChIP，并保留 condition、replicate 和 control。
 3. 把 reads、pairs、matrix、feature calling 与报告拆成 DSL2 process。
-4. pairtools 显式完成 parse、sort、dedup 和 `UU` 筛选，输出去重及 contact QC。
+4. pairtools 显式完成 parse、sort、dedup 和 `UU/UR/RU` 筛选，保留双端唯一定位的普通及 rescued contacts，输出去重及 contact QC。
 5. `.mcool` 一次生成多分辨率并平衡；下游参数检查防止调用不存在的分辨率。
 6. HiChIP 可以优先使用外部 peak；没有 peak 时才从去重、MAPQ 过滤后的 BAM 调 MACS2。
 7. 运行自动保存 validated samplesheet、DAG、trace、timeline、execution report 和 MultiQC。
