@@ -203,4 +203,25 @@ workflow {
         }.flatten())
 
     MULTIQC(multiqcInputs.collect(), Channel.value(multiqcConfig))
+
+    workflow.onComplete = {
+        def headline = workflow.success
+            ? "Done! See results --> ${params.outdir}"
+            : "Pipeline failed! Check .nextflow.log for details."
+
+        def summary = """
+        ${headline}
+
+        Completed at: ${workflow.complete}
+        Duration    : ${workflow.duration}
+        Status      : ${workflow.success ? 'SUCCEEDED' : 'FAILED'}
+        Exit status : ${workflow.exitStatus}
+        """.stripIndent().trim()
+
+        if (!workflow.success && workflow.errorMessage) {
+            summary += "\nError       : ${workflow.errorMessage}"
+        }
+
+        log.info "\n${summary}\n"
+    }
 }

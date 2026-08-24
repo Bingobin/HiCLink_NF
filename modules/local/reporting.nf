@@ -10,7 +10,8 @@ process MULTIQC {
 
     output:
     path 'multiqc_report.html', emit: report
-    path 'multiqc_data', emit: data
+    path '*_data', emit: data
+    path '*_plots', optional: true, emit: plots
 
     when:
     params.run_multiqc.toString().toBoolean()
@@ -27,7 +28,9 @@ process MULTIQC {
 
     stub:
     """
-    mkdir -p multiqc_data
-    touch multiqc_report.html multiqc_data/multiqc_stub.txt
+    mkdir -p multiqc_report_data multiqc_report_plots
+    touch multiqc_report.html
+    touch multiqc_report_data/multiqc_stub.txt
+    touch multiqc_report_plots/multiqc_stub.txt
     """
 }
