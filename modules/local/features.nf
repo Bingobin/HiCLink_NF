@@ -181,7 +181,7 @@ process HICHIP_PEAKS {
     publishDir "${params.outdir}/06_hichip/callpeaks", pattern: '*.callpeaks', mode: params.publish_mode, overwrite: true
 
     input:
-    tuple val(meta), path(bam), path(bai), path(input_peak)
+    tuple val(meta), path(bam, stageAs: 'input_bam/*'), path(bai, stageAs: 'input_index/*'), path(input_peak, stageAs: 'input_peaks/*')
 
     output:
     tuple val(meta), path("${meta.id}.peaks.bed"), emit: peaks

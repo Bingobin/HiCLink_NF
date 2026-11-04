@@ -104,6 +104,44 @@ nextflow run main.nf \
 
 For a Hi-C-only project, set `--run_fithichip false`. For a HiChIP sample without `peak_file`, set `--macs2_genome_size` to `hs`, `mm` or an effective genome size. The workflow converts primary HiChIP alignments to BED before MACS2 peak calling because proximity-ligation pairs are not ordinary short-insert `BAMPE` fragments. MACS2 runs with `--nomodel`; `macs2_extsize` controls the fixed extension length and defaults to 147 bp.
 
+### Restart feature analysis from published results
+
+If `work/` was deleted, start a new feature run using the published results rather than relying on `-resume`:
+
+```bash
+nextflow run main.nf \
+  -profile standard,apptainer_fithichip \
+  -params-file conf/params.local.yml \
+  --start_from features \
+  --previous_results /analysis/previous_run/results \
+  --input /analysis/previous_run/results/pipeline_info/samplesheet.validated.csv \
+  --outdir results_features
+```
+
+`start_from` defaults to `fastq`, which runs the full workflow. In `features` mode, the workflow validates sample metadata and reads `04_matrices/ID.mcool` from `previous_results`. It skips FastQC, fastp, alignment, pairtools, matrix generation, BigWig and MultiQC. FASTQ files, the reference FASTA and BWA indexes are not accessed. The samplesheet needs only `ID` and `assay`; the existing full samplesheet can also be used. Keep sample IDs identical to the published filenames.
+
+For HiChIP with `run_hichip_peaks: true`, peak inputs are selected in this order:
+
+1. `previous_results/06_hichip/peaks/ID.peaks.bed` (reuse without MACS2).
+2. The samplesheet's `peak_file` (including `.narrowPeak` or `.gz`; no BAM required).
+3. `previous_results/02_preprocessing/alignment_bam/ID.peaks.bam` and `.bam.bai` (run MACS2; requires that `save_alignment_bam` was enabled in the original run).
+
+Missing matrices or required peak inputs produce an error naming the sample. For matrix features only, set `--run_hichip_peaks false --run_peak_annotation false --run_fithichip false`. When running FitHiChIP or peak annotation, enable `run_hichip_peaks` even if peaks are already available: this step imports the peak file instead of calling MACS2. Structural HiChIP features still require `--global_features_all_assays true`; the default Hi-C/HiChIP routing is unchanged.
+
+Keep `genome`, `chrom_sizes`, resolutions and the optional compartment phasing track consistent with the original matrices. The requested resolutions and balancing weights must already exist in each `.mcool`; feature mode does not rebuild or rebalance it. Published files must be real copies or working links; links into a deleted work directory cannot be recovered by this mode. A separate `outdir` preserves the old report and feature outputs. Subsequent retries of the new feature run can use `-resume` as long as its new work directory is retained.
+
+If one sample's matrix build was interrupted but its valid pairs were published, rebuild that sample independently before starting features:
+
+```bash
+conda activate hiclink-nf
+bash bin/rebuild_cooler.sh A549.RAD21.SCR \
+  results/03_pairs/A549.RAD21.SCR.valid.pairs.gz \
+  /reference/hg38.chrom.sizes \
+  results/04_matrices
+```
+
+The standalone Bash script runs `cload pairs`, `balance` and `zoomify --balance`, matching the workflow defaults (hg38, 16 CPUs, 5 kb base resolution, the standard eight resolutions, and `ignore_diags=2`). If the original run used different settings, set `HICLINK_GENOME`, `HICLINK_CPUS`, `HICLINK_BASE_RESOLUTION`, `HICLINK_RESOLUTIONS` and/or `HICLINK_IGNORE_DIAGS` before invoking it. Both `.cool` and `.mcool` are published only after the commands succeed. Existing output files are never overwritten; use a separate output directory if necessary. Partial builds are retained in the printed temporary directory on failure.
+
 ## Resolution parameters
 
 - `base_resolution`: finest resolution used to create the initial `.cool` matrix.

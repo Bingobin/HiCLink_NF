@@ -1,5 +1,7 @@
 input: assets/samplesheet.example.csv
 outdir: results
+start_from: fastq  # fastq: full workflow; features: reuse published .mcool and peaks
+previous_results: null  # required for start_from: features; source results directory
 memory_per_cpu_gb: 4
 
 fasta: /reference/hg38.fa

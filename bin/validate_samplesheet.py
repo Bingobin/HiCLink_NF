@@ -20,7 +20,7 @@ FIELDS = [
     "control",
     "peak_file",
 ]
-REQUIRED = {"ID", "R1", "R2", "assay"}
+REQUIRED = {"ID", "assay"}
 SAMPLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 URI_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
 
@@ -46,7 +46,9 @@ def normalize_path(value: str, base_dir: Path) -> str:
     return str(path.resolve(strict=False))
 
 
-def validate(input_path: Path, output_path: Path, base_dir: Path) -> None:
+def validate(
+    input_path: Path, output_path: Path, base_dir: Path, start_from: str = "fastq"
+) -> None:
     errors: list[str] = []
     normalized: list[dict[str, str]] = []
     seen_samples: set[str] = set()
@@ -54,7 +56,8 @@ def validate(input_path: Path, output_path: Path, base_dir: Path) -> None:
     with input_path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
         headers = set(reader.fieldnames or [])
-        missing = sorted(REQUIRED - headers)
+        required = REQUIRED | ({"R1", "R2"} if start_from == "fastq" else set())
+        missing = sorted(required - headers)
         if missing:
             raise ValueError(f"missing required columns: {', '.join(missing)}")
 
@@ -75,7 +78,7 @@ def validate(input_path: Path, output_path: Path, base_dir: Path) -> None:
                 errors.append(f"line {line_number}: {exc}; received '{row['assay']}'")
 
             for field in ("R1", "R2"):
-                if not row[field]:
+                if start_from == "fastq" and not row[field]:
                     errors.append(f"line {line_number}: {field} is empty")
                 row[field] = normalize_path(row[field], base_dir)
 
@@ -100,9 +103,10 @@ def main() -> int:
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--base-dir", required=True, type=Path)
+    parser.add_argument("--start-from", choices=("fastq", "features"), default="fastq")
     args = parser.parse_args()
     try:
-        validate(args.input, args.output, args.base_dir)
+        validate(args.input, args.output, args.base_dir, args.start_from)
     except (OSError, ValueError) as exc:
         print(f"Samplesheet validation failed:\n{exc}", file=sys.stderr)
         return 2

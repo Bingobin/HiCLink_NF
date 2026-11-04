@@ -22,6 +22,15 @@ def intList(value, String name) {
 
 
 workflow {
+    def startFrom = params.start_from?.toString() ?: 'fastq'
+    if (!(startFrom in ['fastq', 'features'])) {
+        error "Parameter --start_from must be fastq or features; received: ${startFrom}"
+    }
+    def featureRestart = startFrom == 'features'
+    if (featureRestart && !params.previous_results) {
+        error 'Feature restart requires --previous_results <published_results_directory>.'
+    }
+
     int memoryPerCpuGb
     try {
         memoryPerCpuGb = params.memory_per_cpu_gb as Integer
@@ -47,6 +56,7 @@ workflow {
     Unified Hi-C and HiChIP analysis
     =================================
     Samplesheet : ${params.input}
+    Start from  : ${startFrom}
     Assay mode  : determined per sample
     Output      : ${params.outdir}
     Genome      : ${params.genome}
@@ -56,7 +66,7 @@ workflow {
     if (!params.input) {
         error 'A samplesheet is required. Set --input <samplesheet.csv>.'
     }
-    if (!params.fasta) {
+    if (!featureRestart && !params.fasta) {
         error 'A BWA-indexed reference FASTA is required. Set --fasta <reference.fa>.'
     }
     if (!params.chrom_sizes) {
@@ -88,23 +98,15 @@ workflow {
     }
 
     inputSheet = file(params.input, checkIfExists: true)
-    referenceFasta = file(params.fasta, checkIfExists: true)
     chromSizes = file(params.chrom_sizes, checkIfExists: true)
     emptyPeak = file("${projectDir}/assets/empty.bed", checkIfExists: true)
-    multiqcConfig = file(params.multiqc_config, checkIfExists: true)
-
-    // Stage the classic BWA index beside the FASTA so that local and container
-    // execution behave identically.
-    bwaIndexes = ['.amb', '.ann', '.bwt', '.pac', '.sa'].collect { suffix ->
-        file("${params.fasta}${suffix}", checkIfExists: true)
-    }
 
     VALIDATE_SAMPLESHEET(
         Channel.value(inputSheet),
         Channel.value(inputSheet.parent.toString())
     )
 
-    samples = VALIDATE_SAMPLESHEET.out.csv
+    sampleRecords = VALIDATE_SAMPLESHEET.out.csv
         .splitCsv(header: true, sep: ',')
         .map { row ->
             def peakFile = row.peak_file?.trim() ?: ''
@@ -119,35 +121,104 @@ workflow {
             ]
             tuple(
                 meta,
-                file(row.R1, checkIfExists: true),
-                file(row.R2, checkIfExists: true)
+                row.R1,
+                row.R2
             )
         }
 
-    FASTQC_RAW(samples)
-    FASTP(samples)
+    if (featureRestart) {
+        previousResults = file(params.previous_results, checkIfExists: true)
+        if (!previousResults.isDirectory()) {
+            error "Parameter --previous_results must be a directory: ${previousResults}"
+        }
+        log.info "Reusing matrices and peak inputs from: ${previousResults}"
+        log.info 'Feature restart skips read preprocessing, matrix generation, BigWig and MultiQC.'
 
-    alignmentInput = FASTP.out.reads.map { meta, read1, read2 ->
-        tuple(meta, read1, read2, referenceFasta, bwaIndexes)
+        matrixUris = sampleRecords.map { meta, read1, read2 ->
+            def multiCool = file("${previousResults}/04_matrices/${meta.id}.mcool")
+            if (!multiCool.isFile()) {
+                error "Feature restart: missing matrix for ${meta.id}: ${multiCool}. Restore the published .mcool file before restarting; broken links to deleted work files cannot be reused."
+            }
+            tuple(meta, multiCool)
+        }
+
+        hichipPeakInput = sampleRecords
+            .filter { meta, read1, read2 ->
+                meta.assay == 'hichip' && params.run_hichip_peaks.toString().toBoolean()
+            }
+            .map { meta, read1, read2 ->
+                def savedPeak = file("${previousResults}/06_hichip/peaks/${meta.id}.peaks.bed")
+                def peak = savedPeak.isFile()
+                    ? savedPeak
+                    : (meta.peak_provided ? file(meta.peak_file, checkIfExists: true) : null)
+                if (peak) {
+                    // External/saved peaks bypass MACS2, so BAM inputs are unused.
+                    def peakMeta = meta + [peak_provided: true, peak_file: peak.toString()]
+                    return tuple(peakMeta, emptyPeak, emptyPeak, peak)
+                }
+                def bam = file("${previousResults}/02_preprocessing/alignment_bam/${meta.id}.peaks.bam")
+                def bai = file("${bam}.bai")
+                if (!bam.isFile() || !bai.isFile()) {
+                    error "Feature restart: ${meta.id} needs published peaks (06_hichip/peaks/${meta.id}.peaks.bed), a samplesheet peak_file, or saved peaks.bam and .bai for MACS2. To run matrix features only, set --run_hichip_peaks false --run_peak_annotation false --run_fithichip false."
+                }
+                tuple(meta, bam, bai, emptyPeak)
+            }
+    } else {
+        referenceFasta = file(params.fasta, checkIfExists: true)
+        multiqcConfig = file(params.multiqc_config, checkIfExists: true)
+        // Stage the classic BWA index beside the FASTA for local/container runs.
+        bwaIndexes = ['.amb', '.ann', '.bwt', '.pac', '.sa'].collect { suffix ->
+            file("${params.fasta}${suffix}", checkIfExists: true)
+        }
+        samples = sampleRecords.map { meta, read1, read2 ->
+            tuple(meta, file(read1, checkIfExists: true), file(read2, checkIfExists: true))
+        }
+
+        FASTQC_RAW(samples)
+        FASTP(samples)
+
+        alignmentInput = FASTP.out.reads.map { meta, read1, read2 ->
+            tuple(meta, read1, read2, referenceFasta, bwaIndexes)
+        }
+        BWA_ALIGN(alignmentInput)
+
+        hichipPeakBams = BWA_ALIGN.out.peak_bam
+            .filter { meta, bam, bai -> meta.assay == 'hichip' }
+        PEAKS_BIGWIG(hichipPeakBams)
+
+        pairtoolsInput = BWA_ALIGN.out.contacts.map { meta, bam ->
+            tuple(meta, bam, chromSizes)
+        }
+        PAIRTOOLS(pairtoolsInput)
+
+        coolerInput = PAIRTOOLS.out.pairs.map { meta, pairs ->
+            tuple(meta, pairs, chromSizes)
+        }
+        COOLER_MATRIX(coolerInput)
+
+        matrixUris = COOLER_MATRIX.out.matrices
+            .map { meta, baseCool, multiCool -> tuple(meta, multiCool) }
+        hichipPeakInput = hichipPeakBams
+            .filter { meta, bam, bai -> params.run_hichip_peaks.toString().toBoolean() }
+            .map { meta, bam, bai ->
+                def peak = meta.peak_provided
+                    ? file(meta.peak_file, checkIfExists: true)
+                    : emptyPeak
+                tuple(meta, bam, bai, peak)
+            }
+
+        multiqcInputs = FASTQC_RAW.out.zips
+            .map { meta, files -> files }
+            .flatten()
+            .mix(FASTP.out.json.map { meta, json -> json })
+            .mix(PAIRTOOLS.out.stats.map { meta, parseStats, dedupStats, pairStats -> [parseStats, dedupStats, pairStats] }.flatten())
+            .mix(BWA_ALIGN.out.flagstats.map { meta, contactsFlagstat, peaksFlagstat ->
+                [contactsFlagstat, peaksFlagstat]
+            }.flatten())
+
+        MULTIQC(multiqcInputs.collect(), Channel.value(multiqcConfig))
     }
-    BWA_ALIGN(alignmentInput)
 
-    hichipPeakBams = BWA_ALIGN.out.peak_bam
-        .filter { meta, bam, bai -> meta.assay == 'hichip' }
-    PEAKS_BIGWIG(hichipPeakBams)
-
-    pairtoolsInput = BWA_ALIGN.out.contacts.map { meta, bam ->
-        tuple(meta, bam, chromSizes)
-    }
-    PAIRTOOLS(pairtoolsInput)
-
-    coolerInput = PAIRTOOLS.out.pairs.map { meta, pairs ->
-        tuple(meta, pairs, chromSizes)
-    }
-    COOLER_MATRIX(coolerInput)
-
-    matrices = COOLER_MATRIX.out.matrices
-    matrixUris = matrices.map { meta, baseCool, multiCool -> tuple(meta, multiCool) }
     globalFeatureMatrices = matrixUris.filter { meta, multiCool ->
         meta.assay == 'hic' || params.global_features_all_assays.toString().toBoolean()
     }
@@ -175,34 +246,17 @@ workflow {
         }
     COOLTOOLS_DOTS(hicLoopInput)
 
-    hichipPeakInput = hichipPeakBams.map { meta, bam, bai ->
-            def peak = meta.peak_provided
-                ? file(meta.peak_file, checkIfExists: true)
-                : emptyPeak
-            tuple(meta, bam, bai, peak)
-    }
     HICHIP_PEAKS(hichipPeakInput)
     HICHIP_PEAK_ANNOTATION(HICHIP_PEAKS.out.peaks)
 
     keyedPeaks = HICHIP_PEAKS.out.peaks.map { meta, peaks -> tuple(meta.id, meta, peaks) }
-    keyedMatrices = matrices
-        .filter { meta, baseCool, multiCool -> meta.assay == 'hichip' }
-        .map { meta, baseCool, multiCool -> tuple(meta.id, multiCool) }
+    keyedMatrices = matrixUris
+        .filter { meta, multiCool -> meta.assay == 'hichip' }
+        .map { meta, multiCool -> tuple(meta.id, multiCool) }
     fithichipInput = keyedPeaks.join(keyedMatrices).map { id, meta, peaks, multiCool ->
         tuple(meta, peaks, multiCool, chromSizes)
     }
     FITHICHIP(fithichipInput)
-
-    multiqcInputs = FASTQC_RAW.out.zips
-        .map { meta, files -> files }
-        .flatten()
-        .mix(FASTP.out.json.map { meta, json -> json })
-        .mix(PAIRTOOLS.out.stats.map { meta, parseStats, dedupStats, pairStats -> [parseStats, dedupStats, pairStats] }.flatten())
-        .mix(BWA_ALIGN.out.flagstats.map { meta, contactsFlagstat, peaksFlagstat ->
-            [contactsFlagstat, peaksFlagstat]
-        }.flatten())
-
-    MULTIQC(multiqcInputs.collect(), Channel.value(multiqcConfig))
 
     workflow.onComplete = {
         def headline = workflow.success

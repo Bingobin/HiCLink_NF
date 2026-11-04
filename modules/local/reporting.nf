@@ -10,8 +10,9 @@ process MULTIQC {
 
     output:
     path 'multiqc_report.html', emit: report
-    path '*_data', emit: data
-    path '*_plots', optional: true, emit: plots
+    // MultiQC derives directory names from --filename (e.g. multiqc_report_data).
+    path '*_data', type: 'dir', emit: data
+    path '*_plots', type: 'dir', optional: true, emit: plots
 
     when:
     params.run_multiqc.toString().toBoolean()

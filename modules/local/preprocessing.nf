@@ -5,7 +5,7 @@ process VALIDATE_SAMPLESHEET {
     publishDir "${params.outdir}/pipeline_info", mode: params.publish_mode, overwrite: true
 
     input:
-    path input_sheet
+    path input_sheet, stageAs: 'input_samplesheet/*'
     val base_dir
 
     output:
@@ -16,6 +16,7 @@ process VALIDATE_SAMPLESHEET {
     validate_samplesheet.py \\
         --input ${input_sheet} \\
         --output samplesheet.validated.csv \\
+        --start-from ${params.start_from} \\
         --base-dir '${base_dir}'
     """
 
