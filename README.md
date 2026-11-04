@@ -17,7 +17,7 @@ FASTQ
   └─ HiChIP: RPGC BigWig, supplied or MACS2 peaks, HOMER annotation and FitHiChIP loops
 ```
 
-A single samplesheet can contain both `hic` and `hichip` libraries. The pipeline retains `condition`, `replicate` and `control` metadata for future replicate-aware and differential modules.
+A single samplesheet can contain both `hic` and `hichip` libraries. The pipeline retains `condition`, `replicate` and `control` metadata. An optional cLoops2/Mustache loop subworkflow and published-file entry point are available separately; replicate-aware inference is not implemented by that module.
 
 HiChIP matrices contain target-enrichment bias. Compartment and TAD analysis therefore runs on Hi-C samples by default. Use `--global_features_all_assays true` only when there is a specific methodological reason to calculate these features for HiChIP, and interpret them separately from unbiased Hi-C maps.
 
@@ -32,7 +32,7 @@ Use `assets/samplesheet.example.csv` as the template.
 | `assay` | Yes | `hic` or `hichip` |
 | `condition` | No | Biological condition; defaults to the sample ID |
 | `replicate` | No | Biological replicate number; defaults to 1 |
-| `control` | No | Sample ID of a matched control, reserved for differential analysis |
+| `control` | No | Sample ID of a matched control; used by the optional HiChIP loop entry point |
 | `peak_file` | HiChIP only | External ChIP-seq or consensus peaks; MACS2 is used when this field is empty |
 
 Example:
@@ -141,6 +141,21 @@ bash bin/rebuild_cooler.sh A549.RAD21.SCR \
 ```
 
 The standalone Bash script runs `cload pairs`, `balance` and `zoomify --balance`, matching the workflow defaults (hg38, 16 CPUs, 5 kb base resolution, the standard eight resolutions, and `ignore_diags=2`). If the original run used different settings, set `HICLINK_GENOME`, `HICLINK_CPUS`, `HICLINK_BASE_RESOLUTION`, `HICLINK_RESOLUTIONS` and/or `HICLINK_IGNORE_DIAGS` before invoking it. Both `.cool` and `.mcool` are published only after the commands succeed. Existing output files are never overwritten; use a separate output directory if necessary. Partial builds are retained in the printed temporary directory on failure.
+
+### Optional cLoops2/Mustache HiChIP loops
+
+A reusable `HICHIP_LOOPS` subworkflow is available in `subworkflows/local/hichip_loops.nf`. It is not yet called by `main.nf`. Its separate `hichip_loops.nf` entry point reads an existing `samplesheet.validated.csv`, finds matching published pairs/cool/mcool by exact sample ID, and derives directed comparisons from `control`. FASTQ and reference files are not accessed.
+
+```bash
+cp conf/hichip_loops_job.example.config conf/hichip_loops_job.local.config
+# Edit input, previous_results, output paths, and the optional existing environment.
+nextflow run hichip_loops.nf -c conf/hichip_loops_job.local.config \
+  -profile hichip_loops_local
+```
+
+See [the subworkflow documentation](docs/HICHIP_LOOPS.md) for the channel contract, future integration example, defaults, output directions, caching, and validation limits. This entry point does not install loop dependencies. With one library per group, differential results are exploratory, not replicate-aware inference. No real-data loop analysis was run during implementation.
+
+The ordered job config loads base settings, job overrides, then runtime report bindings. This keeps reports beside loop results instead of leaving them in a separate default `results/` directory. On macOS with the local profile, only `CLOOPS_CALL` is restricted to one CPU to avoid cLoops2 0.0.3 spawned-worker global-state errors; other tasks retain `hichip_loop_cpus`. The fix was checked using synthetic contacts and harmless configuration/resource tests, without restarting real-data analysis.
 
 ## Resolution parameters
 
