@@ -16,7 +16,7 @@ nextflow run hichip_loops.nf -c conf/hichip_loops.config \
 
 Use -profile hichip_loops_local --hichip_loops_env /path/to/conda/envs/hiclink
 to use an existing local environment. See docs/HICHIP_LOOPS.md for integration.
-No FASTQ, BAM, peaks, FASTA, or chromosome-size file is required by this entry point.
+No FASTQ, BAM or FASTA is required. FitHiChIP additionally requires peaks for each sample.
 '''
     } else {
         if (!params.input) {
@@ -38,7 +38,7 @@ No FASTQ, BAM, peaks, FASTA, or chromosome-size file is required by this entry p
         samples = DISCOVER_LOOP_INPUTS.out.samples.splitCsv(header: true, sep: '\t')
             .map { row ->
                 def meta = [id: row.ID, assay: row.assay, condition: row.condition,
-                            replicate: row.replicate, control: row.control]
+                            replicate: row.replicate, control: row.control, peak_file: row.peak_file ?: '']
                 tuple(meta, file(row.pairs, checkIfExists: true), file(row.matrix, checkIfExists: true))
             }
         comparisons = DISCOVER_LOOP_INPUTS.out.comparisons.splitCsv(header: true, sep: '\t')

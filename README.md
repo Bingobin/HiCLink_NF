@@ -17,7 +17,7 @@ FASTQ
   └─ HiChIP: RPGC BigWig, supplied or MACS2 peaks, HOMER annotation and FitHiChIP loops
 ```
 
-A single samplesheet can contain both `hic` and `hichip` libraries. The pipeline retains `condition`, `replicate` and `control` metadata. An optional cLoops2/Mustache loop subworkflow and published-file entry point are available separately; replicate-aware inference is not implemented by that module.
+A single samplesheet can contain both `hic` and `hichip` libraries. The pipeline retains `condition`, `replicate` and `control` metadata. An optional cLoops2/Mustache/FitHiChIP loop subworkflow and published-file entry point are available separately; replicate-aware inference is not implemented by that sample-pair module.
 
 HiChIP matrices contain target-enrichment bias. Compartment and TAD analysis therefore runs on Hi-C samples by default. Use `--global_features_all_assays true` only when there is a specific methodological reason to calculate these features for HiChIP, and interpret them separately from unbiased Hi-C maps.
 
@@ -142,7 +142,9 @@ bash bin/rebuild_cooler.sh A549.RAD21.SCR \
 
 The standalone Bash script runs `cload pairs`, `balance` and `zoomify --balance`, matching the workflow defaults (hg38, 16 CPUs, 5 kb base resolution, the standard eight resolutions, and `ignore_diags=2`). If the original run used different settings, set `HICLINK_GENOME`, `HICLINK_CPUS`, `HICLINK_BASE_RESOLUTION`, `HICLINK_RESOLUTIONS` and/or `HICLINK_IGNORE_DIAGS` before invoking it. Both `.cool` and `.mcool` are published only after the commands succeed. Existing output files are never overwritten; use a separate output directory if necessary. Partial builds are retained in the printed temporary directory on failure.
 
-### Optional cLoops2/Mustache HiChIP loops
+### Optional cLoops2/Mustache/FitHiChIP loops
+
+For the Docker-based FitHiChIP branch, install with `bash bin/install_fithichip_docker.sh` and use `conf/hichip_loops_fithichip.example.config`. It prepares raw counts, shares the control/treatment union peaks, calls loops and runs the official differential R script. See [FitHiChIP setup and outputs](docs/FITHICHIP_LOOPS.md). The `bash bin/FitHiChIP_Docker.sh -C CONFIG` interface is also available for standalone calling. The original FASTQ entry point is unchanged.
 
 A reusable `HICHIP_LOOPS` subworkflow is available in `subworkflows/local/hichip_loops.nf`. It is not yet called by `main.nf`. Its separate `hichip_loops.nf` entry point reads an existing `samplesheet.validated.csv`, finds matching published pairs/cool/mcool by exact sample ID, and derives directed comparisons from `control`. FASTQ and reference files are not accessed.
 

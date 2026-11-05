@@ -1,4 +1,5 @@
 include { LOOP_INPUT_QC; CLOOPS_PRE; CLOOPS_CALL; CLOOPS_DIFF; MUSTACHE_PREPARE; MUSTACHE_CALL; MUSTACHE_DIFF } from '../../modules/local/hichip_loops'
+include { FITHICHIP_PREPARE; FITHICHIP_UNION_PEAKS; FITHICHIP_LOOP_CALL; FITHICHIP_LOOP_DIFF } from '../../modules/local/fithichip_loops'
 
 
 def hichipLoopSettings(p) {
@@ -17,6 +18,15 @@ def hichipLoopSettings(p) {
         mustache_diff_pt  : p.mustache_diff_pt as Double,
         sparsity          : p.mustache_sparsity as Double,
         balance_max_iters : p.loop_balance_max_iters as Integer,
+        fithichip         : [image: p.fithichip_loop_image.toString(), platform: p.fithichip_loop_platform.toString(),
+                            qvalue: p.fithichip_loop_qvalue as Double,
+                            background_fdr: p.fithichip_loop_background_fdr as Double,
+                            diff_fdr: p.fithichip_loop_diff_fdr as Double,
+                            fold_change: p.fithichip_loop_fold_change as Integer,
+                            bcv: p.fithichip_loop_bcv as Double,
+                            interaction_type: p.fithichip_loop_interaction_type as Integer,
+                            p2p_background: p.fithichip_loop_p2p_background as Integer,
+                            bias_type: p.fithichip_loop_bias_type as Integer],
         outdir            : p.hichip_loop_outdir.toString()
     ]
 }
@@ -84,6 +94,9 @@ workflow HICHIP_LOOPS {
     mustacheCools = channel.empty()
     mustacheCalls = channel.empty()
     mustacheDiff = channel.empty()
+    fitInputs = channel.empty()
+    fitCalls = channel.empty()
+    fitDiff = channel.empty()
 
     if ('cloops2' in cfg.callers) {
         CLOOPS_PRE(validated.map { meta, pairs, _matrix, report -> tuple(meta, pairs, report) }, cfg, helper)
@@ -114,6 +127,55 @@ workflow HICHIP_LOOPS {
         }
     }
 
+    if ('fithichip' in cfg.callers) {
+        fitHelper = file("${projectDir}/bin/fithichip.py", checkIfExists: true)
+        fitLauncher = file("${projectDir}/bin/FitHiChIP_Docker.sh", checkIfExists: true)
+        FITHICHIP_PREPARE(validated.map { meta, _pairs, matrix, _report ->
+            tuple(meta, matrix, file(meta.peak_file, checkIfExists: true))
+        }, cfg, [fitHelper, helper])
+        fitInputs = FITHICHIP_PREPARE.out.inputs
+
+        comparedIds = channel.value([ids: []])
+        pairedCalls = channel.empty()
+        if (cfg.run_diff) {
+            comparedIds = checkedComparisons.collect().map { rows ->
+                [ids: rows.collectMany { comp -> [comp.control, comp.treatment] }.unique()]
+            }
+            indexedFit = fitInputs.map { meta, inputs -> tuple(meta.id, meta, inputs, inputs) }
+            pairedFit = pairLoopComparisons(checkedComparisons, indexedFit)
+                .map { comp, treatment, _t, control, _c -> tuple(comp, treatment, control) }
+            FITHICHIP_UNION_PEAKS(pairedFit, cfg, fitHelper)
+            pairedCalls = FITHICHIP_UNION_PEAKS.out.groups.flatMap { comp, treatment, control, peaks ->
+                // Refit both samples against the same peak universe in each comparison.
+                [tuple([id: comp.control, run_id: "${comp.id}.control", role: 'control', comparison: comp], control, peaks),
+                 tuple([id: comp.treatment, run_id: "${comp.id}.treatment", role: 'treatment', comparison: comp], treatment, peaks)]
+            }
+        }
+        individualCalls = fitInputs.combine(comparedIds)
+            .filter { meta, _inputs, used -> !used.ids.contains(meta.id) }
+            .map { meta, inputs, _used ->
+                tuple([id: meta.id, run_id: meta.id, role: 'individual'], inputs, inputs.resolve('peaks.bed'))
+            }
+        FITHICHIP_LOOP_CALL(pairedCalls.mix(individualCalls), cfg, fitHelper, fitLauncher)
+        fitCalls = FITHICHIP_LOOP_CALL.out.calls
+
+        if (cfg.run_diff) {
+            fitDiffInput = fitCalls.filter { meta, _dir -> meta.role != 'individual' }
+                .map { meta, dir -> tuple(meta.comparison.id, [meta: meta, dir: dir]) }
+                .groupTuple(size: 2)
+                .map { _id, rows ->
+                    def control = rows.find { row -> row.meta.role == 'control' }
+                    def treatment = rows.find { row -> row.meta.role == 'treatment' }
+                    def comp = control.meta.comparison
+                    tuple(comp, control.dir.resolve("${comp.control}.interactions_FitHiC.bed"),
+                          treatment.dir.resolve("${comp.treatment}.interactions_FitHiC.bed"),
+                          control.dir.resolve('chrom.sizes'))
+                }
+            FITHICHIP_LOOP_DIFF(fitDiffInput, cfg, fitHelper)
+            fitDiff = FITHICHIP_LOOP_DIFF.out.differences
+        }
+    }
+
     emit:
     input_qc = LOOP_INPUT_QC.out.reports
     cloops_pre = cloopsPre
@@ -122,4 +184,7 @@ workflow HICHIP_LOOPS {
     mustache_cools = mustacheCools
     mustache_calls = mustacheCalls
     mustache_diff = mustacheDiff
+    fithichip_inputs = fitInputs
+    fithichip_calls = fitCalls
+    fithichip_diff = fitDiff
 }

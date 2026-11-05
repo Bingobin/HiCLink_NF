@@ -1,6 +1,6 @@
 # HiChIP loop-calling and differential-loop subworkflow
 
-This optional DSL2 subworkflow implements cLoops2 and Mustache analysis from existing pairs and cooler matrices. It is not yet wired into the repository's FASTQ entry point (`main.nf`); that workflow is unchanged. A separate entry point (`hichip_loops.nf`) supports reuse of published files without repeating upstream analysis.
+This optional DSL2 subworkflow implements cLoops2, Mustache and Docker-based FitHiChIP analysis from existing pairs and cooler matrices. It is not yet wired into the repository's FASTQ entry point (`main.nf`); that workflow is unchanged. A separate entry point (`hichip_loops.nf`) supports reuse of published files without repeating upstream analysis. The FitHiChIP branch additionally needs peaks; see [FitHiChIP installation, union peaks and differential analysis](FITHICHIP_LOOPS.md).
 
 Status: metadata/format tests, static linting, and previews were checked at initial setup. A subsequent user-run on macOS completed preparation but failed in cLoops2's spawned-worker logging path. The compatibility fix was verified with synthetic contacts and harmless resource/configuration jobs; real-data analysis was not restarted during debugging. No final biological result or performance benchmark is claimed.
 
@@ -17,7 +17,7 @@ Use one ordered config graph: `includeConfig 'hichip_loops.config'`, then job pa
 
 If `previous_results` is omitted, the directory above the samplesheet's parent is used. The expected layout is `RESULTS/pipeline_info/samplesheet.validated.csv`, `RESULTS/03_pairs/`, and `RESULTS/04_matrices/`. Explicit `previous_results` is recommended.
 
-Only `ID` and `assay` are mandatory CSV columns. `condition`, `replicate`, and `control` are preserved; `control` contains the matched control **sample ID**, not a condition label. R1/R2 may point to unavailable server files: they are not accessed. FASTQ, BAM, peaks, reference FASTA, chromosome-size files, and FitHiChIP are not required.
+Only `ID` and `assay` are mandatory CSV columns. `condition`, `replicate`, and `control` are preserved; `control` contains the matched control **sample ID**, not a condition label. R1/R2 may point to unavailable server files: they are not accessed. FASTQ, BAM and reference FASTA are not required. cLoops2/Mustache need no peaks; FitHiChIP needs exact per-sample published peaks or an explicit absolute `peak_file`.
 
 Only `hichip` rows are selected. Each selected sample must have both pairs and a matrix, even if only one caller is enabled; this is the common subworkflow input contract. Exact ID matching, never substring matching, uses this priority:
 
@@ -80,7 +80,7 @@ Load the base `conf/hichip_loops.config` through the ordered job config describe
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `hichip_loop_callers` | `cloops2,mustache` | Enable one or both callers |
+| `hichip_loop_callers` | `cloops2,mustache` | Select from cloops2,mustache,fithichip; FitHiChIP setup is documented separately |
 | `hichip_loop_diff` | `true` | Set false for individual calls only |
 | `loop_resolution` | `10000` | Mustache resolution, inherited from the parent config |
 | `min_loop_distance`, `max_loop_distance` | `20000`, `2000000` | PET distances for cLoops2; final bin-start distances for Mustache |

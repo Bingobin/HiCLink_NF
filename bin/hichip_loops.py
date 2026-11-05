@@ -26,8 +26,12 @@ def require(test, message):
 
 
 def validate_settings(cfg):
-    require(bool(cfg["callers"]) and set(cfg["callers"]) <= {"cloops2", "mustache"},
-            "Loop callers must be cloops2, mustache, or cloops2,mustache")
+    require(bool(cfg["callers"]) and set(cfg["callers"]) <= {"cloops2", "mustache", "fithichip"},
+            "Loop callers must be selected from cloops2,mustache,fithichip")
+    if 'fithichip' in cfg['callers']:
+        fit = cfg['fithichip']
+        require(fit['interaction_type'] in (1, 2, 3, 4), 'FitHiChIP supports one interaction type per run (1-4)')
+        require(fit['fold_change'] >= 2 and fit['bcv'] > 0, 'FitHiChIP fold_change must be >=2 and BCV >0')
     for key in ("resolution", "min_distance", "max_distance", "balance_max_iters"):
         require(isinstance(cfg[key], int) and cfg[key] > 0, f"{key} must be a positive integer")
     require(cfg["min_distance"] < cfg["max_distance"], "min_distance must be smaller than max_distance")
@@ -78,6 +82,15 @@ def find_matrix(root, sample, resolution):
     raise ValueError(f"Missing compatible cool/mcool for {sample} under {root / '04_matrices'}")
 
 
+def find_peaks(root, sample, supplied=''):
+    if supplied:
+        return Path(supplied).resolve(strict=True)
+    path = root / '06_hichip/peaks' / f'{sample}.peaks.bed'
+    if path.is_file():
+        return path.resolve()
+    raise ValueError(f'Missing peaks for {sample}: provide peak_file or 06_hichip/peaks/{sample}.peaks.bed')
+
+
 def discover(sheet, root, cfg, output_dir):
     validate_settings(cfg)
     with sheet.open(newline="", encoding="utf-8-sig") as handle:
@@ -100,6 +113,8 @@ def discover(sheet, root, cfg, output_dir):
                 "pairs": str(find_pairs(root, sid)),
                 "matrix": str(find_matrix(root, sid, cfg["resolution"])),
             })
+            if 'fithichip' in cfg['callers']:
+                records[-1]['peak_file'] = str(find_peaks(root, sid, row.get('peak_file', '')))
     require(bool(records), "No HiChIP samples found in the samplesheet")
     by_id = {row["ID"]: row for row in records}
     comparisons = []
@@ -121,7 +136,7 @@ def discover(sheet, root, cfg, output_dir):
         "input_stats": [
             {"path": row[field], "size": Path(row[field]).stat().st_size,
              "mtime_ns": Path(row[field]).stat().st_mtime_ns}
-            for row in records for field in ("pairs", "matrix")
+            for row in records for field in (("pairs", "matrix", "peak_file") if 'fithichip' in cfg['callers'] else ("pairs", "matrix"))
         ],
     }
     previous_signature = Path(cfg["outdir"]) / "pipeline_info/loop_inputs_signature.json"
@@ -129,7 +144,8 @@ def discover(sheet, root, cfg, output_dir):
         require(json.loads(previous_signature.read_text()) == signature,
                 "Loop settings, samplesheet, helper, or input files changed; use a new hichip_loop_outdir")
     output_dir.mkdir(parents=True, exist_ok=True)
-    for name, fields, rows in (("loop_samples.tsv", SAMPLE_FIELDS, records),
+    sample_fields = SAMPLE_FIELDS + (['peak_file'] if 'fithichip' in cfg['callers'] else [])
+    for name, fields, rows in (("loop_samples.tsv", sample_fields, records),
                                ("loop_comparisons.tsv", COMPARISON_FIELDS, comparisons)):
         with (output_dir / name).open("x", newline="") as handle:
             writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
@@ -138,7 +154,7 @@ def discover(sheet, root, cfg, output_dir):
     (output_dir / "loop_settings.json").write_text(json.dumps(cfg, indent=2) + "\n")
     (output_dir / "loop_inputs_signature.json").write_text(json.dumps(signature, indent=2) + "\n")
     print(f"Discovered {len(records)} HiChIP samples and {len(comparisons)} directed comparisons")
-    print("FASTQ, BAM, peaks, reference FASTA, and chromosome-size files were not accessed")
+    print('FASTQ, BAM and reference FASTA were not accessed; peak paths are required only for FitHiChIP')
 
 
 def matrix_source(source, resolution):
@@ -181,15 +197,20 @@ def check_sample(meta, pairs, matrix, cfg, output):
         require(first and len(first) >= 8 and first[7] in ("UU", "UR", "RU", "MR", "MU"),
                 f"Expected nonempty upstream-filtered valid pairs: {pairs}")
         report["pairs_check"] = "header and first record only; not a complete file scan"
-    if "mustache" in cfg["callers"]:
+    if set(cfg['callers']) & {'mustache', 'fithichip'}:
         uri, clr = matrix_source(matrix, cfg["resolution"])
         require(set(cfg["chroms"]) <= set(clr.chromnames), f"Configured chromosomes missing: {matrix}")
         report["source_uri"] = uri
         report["source_resolution"] = int(clr.binsize)
         report["chromsizes"] = {str(c): int(v) for c, v in clr.chromsizes.items()}
-    report["software"] = {pkg: importlib.metadata.version(pkg) for pkg in
-                          ({"cooler", "mustache-hic"} if cfg["callers"] == ["mustache"] else
-                           {"cLoops2"} if cfg["callers"] == ["cloops2"] else {"cooler", "mustache-hic", "cLoops2"})}
+    packages = set()
+    if 'cloops2' in cfg['callers']:
+        packages.add('cLoops2')
+    if set(cfg['callers']) & {'mustache', 'fithichip'}:
+        packages.add('cooler')
+    if 'mustache' in cfg['callers']:
+        packages.add('mustache-hic')
+    report["software"] = {pkg: importlib.metadata.version(pkg) for pkg in sorted(packages)}
     output.write_text(json.dumps(report, indent=2) + "\n")
 
 
