@@ -100,6 +100,20 @@ class LoopInputTests(unittest.TestCase):
         self.assertEqual([row["ID"] for row in samples], ["HC"])
         self.assertEqual(comparisons, [])
 
+    def test_input_qc_documents_native_cloops_coordinate_deduplication(self):
+        pairs = self.root / "sample.pairs"
+        pairs.write_text(
+            "#columns: readID chrom1 pos1 chrom2 pos2 strand1 strand2 pair_type\n"
+            "r1\tchr1\t100\tchr1\t50100\t+\t-\tUU\n"
+        )
+        cfg = settings()
+        cfg["callers"] = ["cloops2"]
+        output = self.root / "qc.json"
+        LOOPS.check_sample({"id": "S1", "assay": "hichip"}, pairs,
+                           self.root / "unused.cool", cfg, output)
+        self.assertIn("collapses identical coordinate pairs",
+                      json.loads(output.read_text())["cloops2_duplicate_policy"])
+
     def test_diff_disabled_keeps_individual_calls_only(self):
         self.files("S1")
         cfg = settings()
@@ -107,14 +121,24 @@ class LoopInputTests(unittest.TestCase):
         _, comparisons = self.discover("ID,assay,control\nS1,hichip,not_present\n", cfg)
         self.assertEqual(comparisons, [])
 
-    def test_rejects_duplicate_ids_and_silent_mustache_distance_adjustment(self):
+    def test_rejects_conflicting_ids_and_silent_mustache_distance_adjustment(self):
         self.files("S1")
-        with self.assertRaisesRegex(ValueError, "duplicated"):
-            self.discover("ID,assay\nS1,hichip\nS1,hichip\n")
+        with self.assertRaisesRegex(ValueError, "Conflicting library metadata"):
+            self.discover("ID,assay,condition\nS1,hichip,SCR\nS1,hichip,SH\n")
         cfg = settings()
         cfg["max_distance"] = 1000000
         with self.assertRaisesRegex(ValueError, "Mustache requires"):
             LOOPS.validate_settings(cfg)
+
+    def test_sequencing_runs_produce_one_library_and_one_comparison(self):
+        self.files("CTRL")
+        self.files("SH")
+        samples, comparisons = self.discover(
+            "ID,assay,control,run_id\nCTRL,hichip,,CTRL.run001\n"
+            "CTRL,hichip,,CTRL.run002\nSH,hichip,CTRL,SH\n"
+        )
+        self.assertEqual([row["ID"] for row in samples], ["CTRL", "SH"])
+        self.assertEqual(len(comparisons), 1)
 
     def test_distance_filter_preserves_native_fields_and_valid_empty_results(self):
         source = self.root / "native.tsv"
@@ -135,6 +159,16 @@ class LoopInputTests(unittest.TestCase):
         second.write_text(json.dumps({"chromsizes": {"chr1": 101}}))
         with self.assertRaisesRegex(ValueError, "different chromosome sizes"):
             LOOPS.check_pair_reports(first, second)
+
+    def test_relaxed_fithichip_allows_unit_fold_change(self):
+        cfg = settings()
+        cfg.update(callers=['cloops2', 'mustache', 'fithichip'], resolution=5000,
+                   diff_pcut=0.1, mustache_pt=0.1, mustache_diff_pt=0.1,
+                   fithichip={'interaction_type': 3, 'fold_change': 1, 'bcv': 0.4})
+        LOOPS.validate_settings(cfg)
+        cfg['fithichip']['fold_change'] = 0
+        with self.assertRaisesRegex(ValueError, 'fold_change'):
+            LOOPS.validate_settings(cfg)
 
     def test_signature_allows_identical_retry_and_rejects_changed_inputs(self):
         self.files("S1")

@@ -43,7 +43,8 @@ process EXPECTED_CIS {
     tuple val(meta), path(multi_cool), path("${meta.id}.expected_cis.tsv"), emit: expected
 
     when:
-    params.run_expected.toString().toBoolean() || params.run_hic_loops.toString().toBoolean()
+    params.run_expected.toString().toBoolean() ||
+        (params.run_loops.toString().toBoolean() && params.run_hic_loops.toString().toBoolean())
 
     script:
     def uri = "${multi_cool}::/resolutions/${params.loop_resolution}"
@@ -153,7 +154,7 @@ process COOLTOOLS_DOTS {
     tuple val(meta), path("${meta.id}.dots.tsv"), emit: loops
 
     when:
-    params.run_hic_loops.toString().toBoolean()
+    params.run_loops.toString().toBoolean() && params.run_hic_loops.toString().toBoolean()
 
     script:
     def uri = "${multi_cool}::/resolutions/${params.loop_resolution}"
@@ -278,60 +279,5 @@ process HICHIP_PEAK_ANNOTATION {
     stub:
     """
     touch ${meta.id}.peaks.anno.txt ${meta.id}.peaks.anno.stats
-    """
-}
-
-
-process FITHICHIP {
-    tag "${meta.id}"
-    label 'large'
-
-    publishDir "${params.outdir}/06_hichip/fithichip", mode: params.publish_mode, overwrite: true
-
-    input:
-    tuple val(meta), path(peaks), path(multi_cool), path(chrom_sizes)
-
-    output:
-    tuple val(meta), path("${meta.id}.fithichip"), emit: loops
-    tuple val(meta), path("${meta.id}.fithichip.config.txt"), emit: config
-
-    when:
-    params.run_fithichip.toString().toBoolean()
-
-    script:
-    def uri = "${multi_cool}::/resolutions/${params.loop_resolution}"
-    """
-    mkdir -p ${meta.id}.fithichip
-
-    cat > ${meta.id}.fithichip.config.txt <<'FITHICHIP_CONFIG'
-ValidPairs=
-Interval=
-Matrix=
-Bed=
-HIC=
-COOL=${uri}
-PeakFile=${peaks}
-OutDir=${meta.id}.fithichip
-ChrSizeFile=${chrom_sizes}
-CircularGenome=0
-IntType=${params.fithichip_interaction_type}
-BINSIZE=${params.loop_resolution}
-LowDistThr=${params.min_loop_distance}
-UppDistThr=${params.max_loop_distance}
-UseP2PBackgrnd=${params.fithichip_use_p2p_background}
-BiasType=${params.fithichip_bias_type}
-MergeInt=${params.fithichip_merge_interactions}
-QVALUE=${params.fithichip_qvalue}
-PREFIX=${meta.id}
-OverWrite=1
-FITHICHIP_CONFIG
-
-    ${params.fithichip_command} -C ${meta.id}.fithichip.config.txt
-    """
-
-    stub:
-    """
-    mkdir -p ${meta.id}.fithichip
-    touch ${meta.id}.fithichip/stub.loop.txt ${meta.id}.fithichip.config.txt
     """
 }

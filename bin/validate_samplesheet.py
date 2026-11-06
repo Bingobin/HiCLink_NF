@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import csv
 import re
 import sys
@@ -19,7 +20,9 @@ FIELDS = [
     "replicate",
     "control",
     "peak_file",
+    "run_id",
 ]
+LIBRARY_FIELDS = ("assay", "condition", "replicate", "control", "peak_file")
 REQUIRED = {"ID", "assay"}
 SAMPLE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 URI_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
@@ -51,7 +54,8 @@ def validate(
 ) -> None:
     errors: list[str] = []
     normalized: list[dict[str, str]] = []
-    seen_samples: set[str] = set()
+    libraries = {}
+    seen_reads = {}
 
     with input_path.open(newline="", encoding="utf-8-sig") as handle:
         reader = csv.DictReader(handle)
@@ -68,9 +72,6 @@ def validate(
                 errors.append(
                     f"line {line_number}: invalid sample '{sample}'; use letters, digits, '.', '_' or '-'"
                 )
-            elif sample in seen_samples:
-                errors.append(f"line {line_number}: duplicate sample '{sample}'")
-            seen_samples.add(sample)
 
             try:
                 row["assay"] = normalize_assay(row["assay"])
@@ -85,12 +86,35 @@ def validate(
             row["peak_file"] = normalize_path(row["peak_file"], base_dir)
             row["condition"] = row["condition"] or sample
             row["replicate"] = row["replicate"] or "1"
+            metadata = tuple(row[field] for field in LIBRARY_FIELDS)
+            previous = libraries.get(sample)
+            if previous is not None and previous != metadata:
+                errors.append(f"line {line_number}: conflicting library metadata for repeated ID '{sample}'")
+            libraries[sample] = metadata
+            if start_from == "fastq":
+                used = seen_reads.setdefault(sample, set())
+                if row["R1"] == row["R2"] or used.intersection((row["R1"], row["R2"])):
+                    errors.append(f"line {line_number}: reused FASTQ path within library '{sample}'")
+                used.update((row["R1"], row["R2"]))
+            elif previous is not None:
+                continue
             normalized.append(row)
 
     if not normalized:
         errors.append("samplesheet has no data rows")
     if errors:
         raise ValueError("\n".join(errors))
+
+    totals = Counter(row["ID"] for row in normalized)
+    occurrences = Counter()
+    run_ids = set()
+    for row in normalized:
+        sample = row["ID"]
+        occurrences[sample] += 1
+        row["run_id"] = f"{sample}.run{occurrences[sample]:03d}" if totals[sample] > 1 else sample
+        if row["run_id"] in run_ids:
+            raise ValueError(f"Generated run ID collision: {row['run_id']}; rename the conflicting library ID")
+        run_ids.add(row["run_id"])
 
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=FIELDS, lineterminator="\n")

@@ -31,7 +31,7 @@ def validate_settings(cfg):
     if 'fithichip' in cfg['callers']:
         fit = cfg['fithichip']
         require(fit['interaction_type'] in (1, 2, 3, 4), 'FitHiChIP supports one interaction type per run (1-4)')
-        require(fit['fold_change'] >= 2 and fit['bcv'] > 0, 'FitHiChIP fold_change must be >=2 and BCV >0')
+        require(fit['fold_change'] >= 1 and fit['bcv'] > 0, 'FitHiChIP fold_change must be >=1 and BCV >0')
     for key in ("resolution", "min_distance", "max_distance", "balance_max_iters"):
         require(isinstance(cfg[key], int) and cfg[key] > 0, f"{key} must be a positive integer")
     require(cfg["min_distance"] < cfg["max_distance"], "min_distance must be smaller than max_distance")
@@ -97,14 +97,19 @@ def discover(sheet, root, cfg, output_dir):
         reader = csv.DictReader(handle)
         require({"ID", "assay"} <= set(reader.fieldnames or []), "Samplesheet requires ID and assay columns")
         records = []
-        seen = set()
+        seen = {}
         for raw in reader:
             row = {key: (value or "").strip() for key, value in raw.items() if key}
             sid = row["ID"]
-            require(SAMPLE_RE.fullmatch(sid) and sid not in seen, f"Invalid or duplicated sample ID: {sid}")
-            seen.add(sid)
+            require(SAMPLE_RE.fullmatch(sid), f"Invalid sample ID: {sid}")
             assay = re.sub(r"[-_\s]", "", row["assay"].lower())
             require(assay in ("hic", "hichip"), f"Unknown assay for {sid}: {row['assay']}")
+            metadata = (assay, row.get("condition") or sid, row.get("replicate") or "1",
+                        row.get("control", ""), row.get("peak_file", ""))
+            if sid in seen:
+                require(seen[sid] == metadata, f"Conflicting library metadata for repeated ID: {sid}")
+                continue
+            seen[sid] = metadata
             if assay != "hichip":
                 continue
             records.append({
@@ -197,6 +202,9 @@ def check_sample(meta, pairs, matrix, cfg, output):
         require(first and len(first) >= 8 and first[7] in ("UU", "UR", "RU", "MR", "MU"),
                 f"Expected nonempty upstream-filtered valid pairs: {pairs}")
         report["pairs_check"] = "header and first record only; not a complete file scan"
+        report["cloops2_duplicate_policy"] = "native pre collapses identical coordinate pairs, regardless of upstream dedup settings"
+        print("WARNING: cLoops2 pre deduplicates identical coordinates internally; "
+              "skipping pairtools dedup does not disable cLoops2 deduplication.", file=sys.stderr)
     if set(cfg['callers']) & {'mustache', 'fithichip'}:
         uri, clr = matrix_source(matrix, cfg["resolution"])
         require(set(cfg["chroms"]) <= set(clr.chromnames), f"Configured chromosomes missing: {matrix}")

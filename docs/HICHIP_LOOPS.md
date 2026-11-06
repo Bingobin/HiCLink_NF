@@ -1,6 +1,10 @@
 # HiChIP loop-calling and differential-loop subworkflow
 
-This optional DSL2 subworkflow implements cLoops2, Mustache and Docker-based FitHiChIP analysis from existing pairs and cooler matrices. It is not yet wired into the repository's FASTQ entry point (`main.nf`); that workflow is unchanged. A separate entry point (`hichip_loops.nf`) supports reuse of published files without repeating upstream analysis. The FitHiChIP branch additionally needs peaks; see [FitHiChIP installation, union peaks and differential analysis](FITHICHIP_LOOPS.md).
+This optional DSL2 subworkflow implements cLoops2, Mustache and Docker-based FitHiChIP analysis from existing pairs and cooler matrices. The FASTQ entry point (`main.nf`) publishes upstream inputs but does not call this subworkflow automatically. Its old direct FitHiChIP process and legacy parameters/profiles have been removed, so FitHiChIP runs only here. A separate entry point (`hichip_loops.nf`) supports reuse of published files without repeating upstream analysis. The FitHiChIP branch additionally needs peaks; see [FitHiChIP installation, union peaks and differential analysis](FITHICHIP_LOOPS.md).
+
+`--run_loops false` disables the standalone entry point before input discovery or caller execution. `run_loops` defaults to true. `hichipLoopSettings(params)` includes this flag; directly supplied settings may use the Boolean `run_loops: false` to disable caller/preparation/differential branches while retaining input QC. No core workflow inputs are changed.
+
+Repeated samplesheet IDs representing sequencing runs of one library are collapsed to one published library input. Assay, condition, replicate, control and peak file must agree across rows. FASTQ paths and generated `run_id` values are not used for loop analysis. Published pairs/matrices must already contain the merged runs; discovery cannot combine old per-run results.
 
 Status: metadata/format tests, static linting, and previews were checked at initial setup. A subsequent user-run on macOS completed preparation but failed in cLoops2's spawned-worker logging path. The compatibility fix was verified with synthetic contacts and harmless resource/configuration jobs; real-data analysis was not restarted during debugging. No final biological result or performance benchmark is claimed.
 
@@ -62,6 +66,7 @@ loopSamples = PAIRTOOLS.out.pairs
     .map { id, meta, pairs, matrix -> tuple(meta, pairs, matrix) }
 
 loopComparisons = sampleRecords
+    .unique { meta, read1, read2 -> meta.id }
     .filter { meta, read1, read2 -> meta.assay == 'hichip' && meta.control }
     .map { meta, read1, read2 ->
         [id: "${meta.id}_vs_${meta.control}", treatment: meta.id, control: meta.control]

@@ -4,6 +4,7 @@ include { FITHICHIP_PREPARE; FITHICHIP_UNION_PEAKS; FITHICHIP_LOOP_CALL; FITHICH
 
 def hichipLoopSettings(p) {
     return [
+        run_loops         : p.run_loops.toString().toBoolean(),
         callers           : p.hichip_loop_callers.toString().split(',').collect { name -> name.trim() }.findAll { name -> name }.unique(),
         run_diff          : p.hichip_loop_diff.toString().toBoolean(),
         resolution        : p.loop_resolution as Integer,
@@ -98,7 +99,7 @@ workflow HICHIP_LOOPS {
     fitCalls = channel.empty()
     fitDiff = channel.empty()
 
-    if ('cloops2' in cfg.callers) {
+    if (cfg.get('run_loops', true) && 'cloops2' in cfg.callers) {
         CLOOPS_PRE(validated.map { meta, pairs, _matrix, report -> tuple(meta, pairs, report) }, cfg, helper)
         CLOOPS_CALL(CLOOPS_PRE.out.pre, cfg, helper)
         cloopsPre = CLOOPS_PRE.out.pre
@@ -113,7 +114,7 @@ workflow HICHIP_LOOPS {
         }
     }
 
-    if ('mustache' in cfg.callers) {
+    if (cfg.get('run_loops', true) && 'mustache' in cfg.callers) {
         MUSTACHE_PREPARE(validated.map { meta, _pairs, matrix, report -> tuple(meta, matrix, report) }, cfg, helper)
         MUSTACHE_CALL(MUSTACHE_PREPARE.out.cools, cfg, helper)
         mustacheCools = MUSTACHE_PREPARE.out.cools
@@ -127,7 +128,7 @@ workflow HICHIP_LOOPS {
         }
     }
 
-    if ('fithichip' in cfg.callers) {
+    if (cfg.get('run_loops', true) && 'fithichip' in cfg.callers) {
         fitHelper = file("${projectDir}/bin/fithichip.py", checkIfExists: true)
         fitLauncher = file("${projectDir}/bin/FitHiChIP_Docker.sh", checkIfExists: true)
         FITHICHIP_PREPARE(validated.map { meta, _pairs, matrix, _report ->

@@ -6,6 +6,9 @@ include { DISCOVER_LOOP_INPUTS } from './modules/local/hichip_loops'
 
 
 workflow {
+    if (!(params.run_loops.toString().toLowerCase() in ['true', 'false'])) {
+        error 'Parameter --run_loops must be true or false.'
+    }
     if (params.help) {
         log.info '''
 HiCLink_NF: standalone entry point for the reusable HiChIP loop subworkflow
@@ -18,6 +21,8 @@ Use -profile hichip_loops_local --hichip_loops_env /path/to/conda/envs/hiclink
 to use an existing local environment. See docs/HICHIP_LOOPS.md for integration.
 No FASTQ, BAM or FASTA is required. FitHiChIP additionally requires peaks for each sample.
 '''
+    } else if (!params.run_loops.toString().toBoolean()) {
+        log.info 'Loop calling disabled (--run_loops false); no loop tasks or input discovery will run.'
     } else {
         if (!params.input) {
             error 'A samplesheet is required: --input <samplesheet.validated.csv>'

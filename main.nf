@@ -2,8 +2,8 @@
 
 nextflow.enable.dsl = 2
 
-include { VALIDATE_SAMPLESHEET; FASTQC_RAW; FASTP; BWA_ALIGN; PEAKS_BIGWIG; PAIRTOOLS; COOLER_MATRIX } from './modules/local/preprocessing'
-include { CONTACT_QC; EXPECTED_CIS; COMPARTMENTS; INSULATION_TADS; COOLTOOLS_DOTS; HICHIP_PEAKS; HICHIP_PEAK_ANNOTATION; FITHICHIP } from './modules/local/features'
+include { VALIDATE_SAMPLESHEET; FASTQC_RAW; FASTP; MERGE_FASTQ; BWA_ALIGN; PEAKS_BIGWIG; PAIRTOOLS; COOLER_MATRIX } from './modules/local/preprocessing'
+include { CONTACT_QC; EXPECTED_CIS; COMPARTMENTS; INSULATION_TADS; COOLTOOLS_DOTS; HICHIP_PEAKS; HICHIP_PEAK_ANNOTATION } from './modules/local/features'
 include { MULTIQC } from './modules/local/reporting'
 
 
@@ -22,6 +22,12 @@ def intList(value, String name) {
 
 
 workflow {
+    if (!(params.skip_pairtools_dedup.toString().toLowerCase() in ['true', 'false'])) {
+        error 'Parameter --skip_pairtools_dedup must be true or false.'
+    }
+    if (!(params.run_loops.toString().toLowerCase() in ['true', 'false'])) {
+        error 'Parameter --run_loops must be true or false.'
+    }
     def startFrom = params.start_from?.toString() ?: 'fastq'
     if (!(startFrom in ['fastq', 'features'])) {
         error "Parameter --start_from must be fastq or features; received: ${startFrom}"
@@ -58,6 +64,8 @@ workflow {
     Samplesheet : ${params.input}
     Start from  : ${startFrom}
     Assay mode  : determined per sample
+    Skip dedup  : ${params.skip_pairtools_dedup} (pairtools contact branch only)
+    Run loops   : ${params.run_loops}
     Output      : ${params.outdir}
     Genome      : ${params.genome}
     Memory/CPU  : ${memoryPerCpuGb} GB
@@ -79,7 +87,8 @@ workflow {
     if (params.run_compartments.toString().toBoolean()) {
         requiredResolutions << (params.compartment_resolution as Integer)
     }
-    if (params.run_hic_loops.toString().toBoolean() || params.run_fithichip.toString().toBoolean()) {
+    if (params.run_expected.toString().toBoolean() ||
+        (params.run_loops.toString().toBoolean() && params.run_hic_loops.toString().toBoolean())) {
         requiredResolutions << (params.loop_resolution as Integer)
     }
     def missingResolutions = requiredResolutions.unique().findAll { !resolutions.contains(it) }
@@ -117,7 +126,8 @@ workflow {
                 replicate     : row.replicate,
                 control       : row.control,
                 peak_file     : peakFile,
-                peak_provided : peakFile as Boolean
+                peak_provided : peakFile as Boolean,
+                run_id        : row.run_id
             ]
             tuple(
                 meta,
@@ -159,7 +169,7 @@ workflow {
                 def bam = file("${previousResults}/02_preprocessing/alignment_bam/${meta.id}.peaks.bam")
                 def bai = file("${bam}.bai")
                 if (!bam.isFile() || !bai.isFile()) {
-                    error "Feature restart: ${meta.id} needs published peaks (06_hichip/peaks/${meta.id}.peaks.bed), a samplesheet peak_file, or saved peaks.bam and .bai for MACS2. To run matrix features only, set --run_hichip_peaks false --run_peak_annotation false --run_fithichip false."
+                    error "Feature restart: ${meta.id} needs published peaks (06_hichip/peaks/${meta.id}.peaks.bed), a samplesheet peak_file, or saved peaks.bam and .bai for MACS2. To run matrix features only, set --run_hichip_peaks false --run_peak_annotation false."
                 }
                 tuple(meta, bam, bai, emptyPeak)
             }
@@ -171,13 +181,28 @@ workflow {
             file("${params.fasta}${suffix}", checkIfExists: true)
         }
         samples = sampleRecords.map { meta, read1, read2 ->
-            tuple(meta, file(read1, checkIfExists: true), file(read2, checkIfExists: true))
+            def runMeta = meta + [id: meta.run_id, library_id: meta.id]
+            runMeta.remove('run_id')
+            tuple(runMeta, file(read1, checkIfExists: true), file(read2, checkIfExists: true))
         }
 
         FASTQC_RAW(samples)
         FASTP(samples)
 
-        alignmentInput = FASTP.out.reads.map { meta, read1, read2 ->
+        libraryReads = FASTP.out.reads
+            .map { meta, read1, read2 -> tuple(meta.library_id, meta, read1, read2) }
+            .groupTuple()
+            .map { libraryId, metas, read1s, read2s ->
+                // Sort both mates with the same index order, independent of task completion order.
+                def order = (0..<metas.size()).toList().sort { metas[it].id }
+                def libraryMeta = metas[order[0]] + [id: libraryId]
+                libraryMeta.remove('library_id')
+                tuple(libraryMeta, order.collect { metas[it].id },
+                    order.collect { read1s[it] }, order.collect { read2s[it] })
+            }
+        MERGE_FASTQ(libraryReads)
+
+        alignmentInput = MERGE_FASTQ.out.reads.map { meta, read1, read2 ->
             tuple(meta, read1, read2, referenceFasta, bwaIndexes)
         }
         BWA_ALIGN(alignmentInput)
@@ -211,7 +236,8 @@ workflow {
             .map { meta, files -> files }
             .flatten()
             .mix(FASTP.out.json.map { meta, json -> json })
-            .mix(PAIRTOOLS.out.stats.map { meta, parseStats, dedupStats, pairStats -> [parseStats, dedupStats, pairStats] }.flatten())
+            .mix(PAIRTOOLS.out.stats.map { meta, parseStats, pairStats -> [parseStats, pairStats] }.flatten())
+            .mix(PAIRTOOLS.out.dedup_stats.map { meta, dedupStats -> dedupStats })
             .mix(BWA_ALIGN.out.flagstats.map { meta, contactsFlagstat, peaksFlagstat ->
                 [contactsFlagstat, peaksFlagstat]
             }.flatten())
@@ -248,15 +274,6 @@ workflow {
 
     HICHIP_PEAKS(hichipPeakInput)
     HICHIP_PEAK_ANNOTATION(HICHIP_PEAKS.out.peaks)
-
-    keyedPeaks = HICHIP_PEAKS.out.peaks.map { meta, peaks -> tuple(meta.id, meta, peaks) }
-    keyedMatrices = matrixUris
-        .filter { meta, multiCool -> meta.assay == 'hichip' }
-        .map { meta, multiCool -> tuple(meta.id, multiCool) }
-    fithichipInput = keyedPeaks.join(keyedMatrices).map { id, meta, peaks, multiCool ->
-        tuple(meta, peaks, multiCool, chromSizes)
-    }
-    FITHICHIP(fithichipInput)
 
     workflow.onComplete = {
         def headline = workflow.success

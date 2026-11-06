@@ -3,6 +3,8 @@ outdir: results
 start_from: fastq  # fastq: full workflow; features: reuse published .mcool and peaks
 previous_results: null  # required for start_from: features; source results directory
 memory_per_cpu_gb: 4
+skip_pairtools_dedup: false  # true: skip duplicate detection/removal in the contact branch
+run_loops: true  # false: skip all loop callers; keep preprocessing, matrices and other features
 
 fasta: /reference/hg38.fa
 chrom_sizes: /reference/hg38.chrom.sizes
@@ -24,4 +26,3 @@ tad_windows: 100000,250000,500000
 macs2_genome_size: hs
 macs2_extsize: 147
 run_peak_annotation: true
-run_fithichip: true

@@ -22,7 +22,11 @@ process VALIDATE_SAMPLESHEET {
 
     stub:
     """
-    cp ${input_sheet} samplesheet.validated.csv
+    validate_samplesheet.py \\
+        --input ${input_sheet} \\
+        --output samplesheet.validated.csv \\
+        --start-from ${params.start_from} \\
+        --base-dir '${base_dir}'
     """
 }
 
@@ -34,7 +38,7 @@ process FASTQC_RAW {
     publishDir "${params.outdir}/01_qc/fastqc_raw", mode: params.publish_mode, overwrite: true
 
     input:
-    tuple val(meta), path(read1), path(read2)
+    tuple val(meta), path(read1, stageAs: 'raw_r1/*'), path(read2, stageAs: 'raw_r2/*')
 
     output:
     tuple val(meta), path("${meta.id}.*_fastqc.zip"), emit: zips
@@ -44,17 +48,19 @@ process FASTQC_RAW {
     params.run_fastqc.toString().toBoolean()
 
     script:
+    def suffix1 = read1.name.endsWith('.gz') ? 'fastq.gz' : 'fastq'
+    def suffix2 = read2.name.endsWith('.gz') ? 'fastq.gz' : 'fastq'
     """
-    fastqc --threads ${task.cpus} ${read1} ${read2}
-    for report in *_fastqc.zip *_fastqc.html; do
-        mv "\${report}" "${meta.id}.\${report}"
-    done
+    # Unique input names also keep sample names inside FastQC reports distinct.
+    ln -s '${read1}' '${meta.id}.R1.${suffix1}'
+    ln -s '${read2}' '${meta.id}.R2.${suffix2}'
+    fastqc --threads ${task.cpus} '${meta.id}.R1.${suffix1}' '${meta.id}.R2.${suffix2}'
     """
 
     stub:
     """
-    touch ${meta.id}.${read1.simpleName}_fastqc.zip ${meta.id}.${read2.simpleName}_fastqc.zip
-    touch ${meta.id}.${read1.simpleName}_fastqc.html ${meta.id}.${read2.simpleName}_fastqc.html
+    touch ${meta.id}.R1_fastqc.zip ${meta.id}.R2_fastqc.zip
+    touch ${meta.id}.R1_fastqc.html ${meta.id}.R2_fastqc.html
     """
 }
 
@@ -87,6 +93,7 @@ process FASTP {
         --thread ${task.cpus} \\
         --json ${meta.id}.fastp.json \\
         --html ${meta.id}.fastp.html \\
+        --report_title '${meta.id}' \\
         ${noTrim}
     """
 
@@ -95,6 +102,40 @@ process FASTP {
     touch ${meta.id}.R1.fastq.gz ${meta.id}.R2.fastq.gz
     echo '{}' > ${meta.id}.fastp.json
     touch ${meta.id}.fastp.html
+    """
+}
+
+
+process MERGE_FASTQ {
+    tag "${meta.id} (${run_ids.size()} sequencing runs)"
+    label 'small'
+
+    publishDir "${params.outdir}/pipeline_info/sequencing_runs", pattern: '*.sequencing_runs.tsv', mode: params.publish_mode, overwrite: true
+
+    input:
+    tuple val(meta), val(run_ids), path(read1s, stageAs: 'run_reads/*'), path(read2s, stageAs: 'run_reads/*')
+
+    output:
+    tuple val(meta), path("${meta.id}.R1.fastq.gz"), path("${meta.id}.R2.fastq.gz"), emit: reads
+    tuple val(meta), path("${meta.id}.sequencing_runs.tsv"), emit: manifest
+
+    script:
+    def r1 = read1s instanceof Collection ? read1s : [read1s]
+    def r2 = read2s instanceof Collection ? read2s : [read2s]
+    def merge1 = r1.size() == 1 ? "ln -s '${r1[0]}' ${meta.id}.R1.fastq.gz" : "cat ${r1.collect { "'${it}'" }.join(' ')} > ${meta.id}.R1.fastq.gz"
+    def merge2 = r2.size() == 1 ? "ln -s '${r2[0]}' ${meta.id}.R2.fastq.gz" : "cat ${r2.collect { "'${it}'" }.join(' ')} > ${meta.id}.R2.fastq.gz"
+    def manifest = (['run_id\tclean_R1\tclean_R2'] + (0..<run_ids.size()).collect { i -> "${run_ids[i]}\t${r1[i]}\t${r2[i]}" }).join('\n')
+    """
+    # Concatenated gzip members preserve run order without decompression/recompression.
+    ${merge1}
+    ${merge2}
+    printf '%s\\n' '${manifest}' > ${meta.id}.sequencing_runs.tsv
+    """
+
+    stub:
+    """
+    touch ${meta.id}.R1.fastq.gz ${meta.id}.R2.fastq.gz
+    printf 'run_id\\n%s\\n' '${run_ids.join('\n')}' > ${meta.id}.sequencing_runs.tsv
     """
 }
 
@@ -217,19 +258,27 @@ process PAIRTOOLS {
     label 'medium'
 
     publishDir "${params.outdir}/03_pairs", pattern: '*.valid.pairs.gz', mode: params.publish_mode, overwrite: true, enabled: params.save_pairs.toString().toBoolean()
-    publishDir "${params.outdir}/01_qc/pairtools", pattern: '*.stats', mode: params.publish_mode, overwrite: true
+    publishDir "${params.outdir}/01_qc/pairtools", pattern: '*.{stats,retention.tsv,dedup_policy.tsv}', mode: params.publish_mode, overwrite: true
 
     input:
     tuple val(meta), path(bam), path(chrom_sizes)
 
     output:
     tuple val(meta), path("${meta.id}.valid.pairs.gz"), emit: pairs
-    tuple val(meta), path("${meta.id}.parse.stats"), path("${meta.id}.dedup.stats"), path("${meta.id}.pairtools.stats"), emit: stats
+    tuple val(meta), path("${meta.id}.parse.stats"), path("${meta.id}.pairtools.stats"), emit: stats
+    tuple val(meta), path("${meta.id}.dedup.stats"), optional: true, emit: dedup_stats
+    tuple val(meta), path("${meta.id}.retention.tsv"), emit: retention
+    tuple val(meta), path("${meta.id}.dedup_policy.tsv"), emit: policy
 
     script:
+    def skipDedup = params.skip_pairtools_dedup.toString().toBoolean()
+    def dedupStage = skipDedup ? 'cat' : "pairtools dedup --max-mismatch ${params.dedup_max_mismatch} --output-stats ${meta.id}.dedup.stats"
+    def beforeStats = skipDedup ? "${meta.id}.parse.stats" : "${meta.id}.dedup.stats"
     """
     set -o pipefail
 
+    # Skipping dedup preserves repeated contacts with their original UU/UR/RU types.
+    printf 'pairtools_dedup\\t%s\\n' '${skipDedup ? 'skipped' : 'enabled'}' > ${meta.id}.dedup_policy.tsv
     pairtools parse \\
         --chroms-path ${chrom_sizes} \\
         --min-mapq ${params.min_mapq} \\
@@ -242,20 +291,27 @@ process PAIRTOOLS {
     | pairtools sort \\
         --nproc ${task.cpus} \\
         --tmpdir . \\
-    | pairtools dedup \\
-        --max-mismatch ${params.dedup_max_mismatch} \\
-        --output-stats ${meta.id}.dedup.stats \\
+    | ${dedupStage} \\
     | pairtools select \\
         '((pair_type == "UU") or (pair_type == "UR") or (pair_type == "RU"))' \\
         -o ${meta.id}.valid.pairs.gz
 
     pairtools stats -o ${meta.id}.pairtools.stats ${meta.id}.valid.pairs.gz
+
+    check_pairs_retention.py \\
+        --before ${beforeStats} \\
+        --selected ${meta.id}.pairtools.stats > ${meta.id}.retention.tsv
     """
 
     stub:
+    def skipDedup = params.skip_pairtools_dedup.toString().toBoolean()
+    def dedupStub = skipDedup ? '' : "touch ${meta.id}.dedup.stats"
     """
     touch ${meta.id}.valid.pairs.gz
-    touch ${meta.id}.parse.stats ${meta.id}.dedup.stats ${meta.id}.pairtools.stats
+    touch ${meta.id}.parse.stats ${meta.id}.pairtools.stats
+    ${dedupStub}
+    touch ${meta.id}.retention.tsv
+    printf 'pairtools_dedup\\t%s\\n' '${skipDedup ? 'skipped' : 'enabled'}' > ${meta.id}.dedup_policy.tsv
     """
 }
 

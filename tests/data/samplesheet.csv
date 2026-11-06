@@ -1,3 +1,3 @@
 ID,R1,R2,assay,condition,replicate,control,peak_file
-tiny_hic,tests/data/reads_R1.fastq,tests/data/reads_R2.fastq,hic,control,1,,
-tiny_hichip,tests/data/reads_R1.fastq,tests/data/reads_R2.fastq,hichip,treatment,1,tiny_hic,tests/data/tiny.peaks.bed
+tiny_hic,reads_R1.fastq,reads_R2.fastq,hic,control,1,,
+tiny_hichip,reads_R1.fastq,reads_R2.fastq,hichip,treatment,1,tiny_hic,tiny.peaks.bed
