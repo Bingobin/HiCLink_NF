@@ -103,14 +103,14 @@ def discover(sheet, root, cfg, output_dir):
             sid = row["ID"]
             require(SAMPLE_RE.fullmatch(sid), f"Invalid sample ID: {sid}")
             assay = re.sub(r"[-_\s]", "", row["assay"].lower())
-            require(assay in ("hic", "hichip"), f"Unknown assay for {sid}: {row['assay']}")
+            require(assay in ("hic", "hichip", "chiapet"), f"Unknown assay for {sid}: {row['assay']}")
             metadata = (assay, row.get("condition") or sid, row.get("replicate") or "1",
                         row.get("control", ""), row.get("peak_file", ""))
             if sid in seen:
                 require(seen[sid] == metadata, f"Conflicting library metadata for repeated ID: {sid}")
                 continue
             seen[sid] = metadata
-            if assay != "hichip":
+            if assay == "hic":
                 continue
             records.append({
                 "ID": sid, "assay": assay, "condition": row.get("condition") or sid,
@@ -120,7 +120,7 @@ def discover(sheet, root, cfg, output_dir):
             })
             if 'fithichip' in cfg['callers']:
                 records[-1]['peak_file'] = str(find_peaks(root, sid, row.get('peak_file', '')))
-    require(bool(records), "No HiChIP samples found in the samplesheet")
+    require(bool(records), "No HiChIP or processed ChIA-PET samples found in the samplesheet")
     by_id = {row["ID"]: row for row in records}
     comparisons = []
     for row in records:
@@ -128,6 +128,7 @@ def discover(sheet, root, cfg, output_dir):
         if not control or not cfg["run_diff"]:
             continue
         require(control in by_id and control != sid, f"Invalid HiChIP control for {sid}: {control}")
+        require(row["assay"] == by_id[control]["assay"], f"Cross-assay comparison is not supported: {sid} vs {control}")
         # The current HMGA2 IDs encode cell line and IP target in their first two fields.
         # Generic IDs are allowed; explicit matching is the user's responsibility.
         tparts, cparts = sid.split("."), control.split(".")
@@ -158,7 +159,7 @@ def discover(sheet, root, cfg, output_dir):
             writer.writerows(rows)
     (output_dir / "loop_settings.json").write_text(json.dumps(cfg, indent=2) + "\n")
     (output_dir / "loop_inputs_signature.json").write_text(json.dumps(signature, indent=2) + "\n")
-    print(f"Discovered {len(records)} HiChIP samples and {len(comparisons)} directed comparisons")
+    print(f"Discovered {len(records)} loop-input libraries and {len(comparisons)} directed comparisons")
     print('FASTQ, BAM and reference FASTA were not accessed; peak paths are required only for FitHiChIP')
 
 
@@ -184,7 +185,8 @@ def matrix_source(source, resolution):
 def check_sample(meta, pairs, matrix, cfg, output):
     validate_settings(cfg)
     require(SAMPLE_RE.fullmatch(meta["id"]), "Invalid sample ID")
-    require(meta.get("assay") == "hichip", "This subworkflow accepts HiChIP samples only")
+    require(meta.get("assay") in ("hichip", "chiapet"),
+            "This subworkflow accepts HiChIP or processed ChIA-PET contacts only")
     report = {"sample": meta, "pairs": str(pairs), "matrix": str(matrix), "settings": cfg}
     if "cloops2" in cfg["callers"]:
         opener = gzip.open if pairs.suffix == ".gz" else open

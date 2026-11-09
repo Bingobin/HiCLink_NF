@@ -100,6 +100,33 @@ class LoopInputTests(unittest.TestCase):
         self.assertEqual([row["ID"] for row in samples], ["HC"])
         self.assertEqual(comparisons, [])
 
+    def test_processed_chiapet_is_selected_without_relabeling(self):
+        self.files("PET")
+        self.files("HC")
+        samples, comparisons = self.discover("ID,assay\nPET,ChIA-PET\nHC,hichip\n")
+        self.assertEqual([(row["ID"], row["assay"]) for row in samples],
+                         [("PET", "chiapet"), ("HC", "hichip")])
+        self.assertEqual(comparisons, [])
+
+    def test_cross_assay_comparisons_are_rejected(self):
+        self.files("CTRL")
+        self.files("PET")
+        with self.assertRaisesRegex(ValueError, "Cross-assay"):
+            self.discover("ID,assay,control\nCTRL,hichip,\nPET,chiapet,CTRL\n")
+
+    def test_processed_chiapet_input_qc_preserves_assay_label(self):
+        pairs = self.root / "pet.pairs"
+        pairs.write_text(
+            "#columns: readID chrom1 pos1 chrom2 pos2 strand1 strand2 pair_type\n"
+            "p1\tchr1\t100\tchr1\t50100\t+\t-\tUU\n"
+        )
+        cfg = settings()
+        cfg["callers"] = ["cloops2"]
+        output = self.root / "pet.qc.json"
+        LOOPS.check_sample({"id": "PET", "assay": "chiapet"}, pairs,
+                           self.root / "unused.cool", cfg, output)
+        self.assertEqual(json.loads(output.read_text())["sample"]["assay"], "chiapet")
+
     def test_input_qc_documents_native_cloops_coordinate_deduplication(self):
         pairs = self.root / "sample.pairs"
         pairs.write_text(

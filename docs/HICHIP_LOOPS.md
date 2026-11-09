@@ -23,7 +23,7 @@ If `previous_results` is omitted, the directory above the samplesheet's parent i
 
 Only `ID` and `assay` are mandatory CSV columns. `condition`, `replicate`, and `control` are preserved; `control` contains the matched control **sample ID**, not a condition label. R1/R2 may point to unavailable server files: they are not accessed. FASTQ, BAM and reference FASTA are not required. cLoops2/Mustache need no peaks; FitHiChIP needs exact per-sample published peaks or an explicit absolute `peak_file`.
 
-Only `hichip` rows are selected. Each selected sample must have both pairs and a matrix, even if only one caller is enabled; this is the common subworkflow input contract. Exact ID matching, never substring matching, uses this priority:
+Both `hichip` and `chiapet` rows are selected as already processed contacts; `hic` rows are excluded. ChIA-PET input must already have pairs and a compatible matrix, plus peaks for FitHiChIP. This does not add raw-read/linker/UMI processing or establish protocol-specific statistical validation. Cross-assay differential comparisons are rejected. Each selected sample must have both pairs and a matrix, even if only one caller is enabled; this is the common subworkflow input contract. Exact ID matching, never substring matching, uses this priority:
 
 1. Pairs: `03_pairs/ID.valid.pairs.gz`, then `ID.valid.pairs`, `ID.pairs.gz`, or `ID.pairs`.
 2. Matrices: `04_matrices/ID.mcool`, then `ID.RESOLUTION.cool`, then `ID.cool`, then the closest finer `ID.BINSIZE.cool` whose bin size divides the requested resolution.
@@ -46,7 +46,7 @@ The core reads no CSV and discovers no local directories:
 
 | Input | Contract |
 | --- | --- |
-| `samples` | Queue channel: `tuple(meta, pairs_path, matrix_path)`; unique `meta.id`, `meta.assay == 'hichip'`; retain condition/replicate/control as needed |
+| `samples` | Queue channel: `tuple(meta, pairs_path, matrix_path)`; unique `meta.id`, `meta.assay` is `hichip` or `chiapet`; retain condition/replicate/control as needed |
 | `comparisons` | Queue channel of maps: `[id: comparison_id, treatment: sample_id, control: sample_id]` |
 | `cfg` | Ordinary immutable settings map, not a queue channel; use `hichipLoopSettings(params)` after loading the config, or supply the same settings directly |
 
@@ -99,7 +99,7 @@ Load the base `conf/hichip_loops.config` through the ordered job config describe
 
 Mustache 1.3.3 silently adjusts some distances. This workflow instead requires `200*resolution <= max_loop_distance <= min(2000*resolution, 2 Mb)`. Start at 10 kb; run 5 kb sensitivity analysis separately if appropriate.
 
-The `hichip_loops_local` profile serializes all tasks (`queueSize=1`), limits numerical-library threads to one, and keeps matplotlib caches task-local. It uses an existing environment via `hichip_loops_env`, or the current `PATH` if unset. It does not install an environment. Memory remains `task.cpus * memory_per_cpu_gb` GB; local resource accounting is not a hard RAM limit. Other executors can use the normal parent profiles with tools provisioned separately.
+The `hichip_loops_local` profile leaves concurrency to Nextflow's resource-aware local scheduler: it does not set `queueSize` or `maxForks`. Nextflow detects the host CPU/memory capacity and admits ready tasks while their combined resource requests fit; concurrency is not fixed to a sample count. Task CPU/memory requests remain necessary estimates, not automatically measured requirements. This accounting does not track memory used by unrelated applications and is not a hard RAM limit. Analysis memory remains `task.cpus * memory_per_cpu_gb` GB, while FitHiChIP keeps its separate container resource limits; the Docker Desktop VM must also accommodate concurrently running containers. The profile limits numerical-library threads to one, keeps matplotlib caches task-local, and uses an existing environment via `hichip_loops_env`, or the current `PATH` if unset. It does not install an environment. Other executors can use the normal parent profiles with tools provisioned separately. Restart with `-resume` to apply configuration changes; an already-running session does not reload them.
 
 The runtime config includes `hichip_loops_macos.config`, which also binds analysis CPU requests lazily: loading the base config before a local override must not freeze its default of two CPUs. Under the local profile on macOS, `CLOOPS_CALL` requests one CPU and consequently calls `cLoops2 callLoops -p 1`. In cLoops2 0.0.3, `logger` and `DBSCAN` are module globals initialized in the parent only; spawn workers re-import them as `None`. Both globals matter, so initializing only the logger would not repair the full defect. This policy avoids the faulty multiprocess path without forcing unsafe fork behavior or modifying site-packages. `CLOOPS_PRE`, `CLOOPS_DIFF`, cooler, and Mustache keep the final requested CPU count; Linux local runs also keep it. For future main-workflow integration, include the reusable resource/macOS policy separately, while leaving the parent's report locations under its own control.
 

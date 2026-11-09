@@ -37,6 +37,9 @@ def checkComparison(comparison, treatment, control) {
     if (comparison.treatment != treatment.id || comparison.control != control.id || treatment.id == control.id) {
         error "Invalid directed loop comparison: ${comparison}"
     }
+    if (treatment.assay != control.assay) {
+        error "Cross-assay loop comparison is not supported: ${comparison}"
+    }
     def tparts = treatment.id.tokenize('.')
     def cparts = control.id.tokenize('.')
     if (tparts.size() >= 3 && cparts.size() >= 3 && tparts.take(2) != cparts.take(2)) {
